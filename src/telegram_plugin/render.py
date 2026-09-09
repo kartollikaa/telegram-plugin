@@ -2,19 +2,47 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from telegram_plugin.refs import message_link
 
 TEXT_LIMIT = 500
+LABEL_LIMIT = 80
+NAME_LIMIT = 120
 MAX_ITEMS = 200
 DEFAULT_ITEMS = 50
+
+# Control characters, path separators, shell metacharacters and whitespace.
+# Letters outside ASCII are left alone: they carry no meaning to a shell, and
+# mangling them would rename half the world's attachments.
+_UNSAFE_IN_NAME = re.compile(r"[\x00-\x1f\x7f/\\:;|&$<>*?`'\"(){}\[\]!~\s]+")
 
 
 def truncate(text: str, limit: int = TEXT_LIMIT) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
     return text[:limit], True
+
+
+def label(text: str | None) -> str | None:
+    """Display names and chat titles are written by other people, like message text."""
+    if text is None:
+        return None
+    trimmed = text.strip()
+    return trimmed[:LABEL_LIMIT] if len(trimmed) > LABEL_LIMIT else trimmed
+
+
+def safe_name(name: str) -> str:
+    """A sender picks the attachment name; it must survive being handed to a shell."""
+    cleaned = _UNSAFE_IN_NAME.sub("_", name).lstrip(".-")
+    if len(cleaned) > NAME_LIMIT:
+        stem, dot, suffix = cleaned.rpartition(".")
+        if dot and len(suffix) <= 10:
+            cleaned = stem[: NAME_LIMIT - len(suffix) - 1] + "." + suffix
+        else:
+            cleaned = cleaned[:NAME_LIMIT]
+    return cleaned or "attachment"
 
 
 def render_message(
@@ -25,12 +53,13 @@ def render_message(
     chat_internal_id: int | None = None,
 ) -> dict:
     text, was_truncated = truncate(getattr(message, "message", None) or "")
+    display_name = label(sender_name)
     date = getattr(message, "date", None)
     rendered = {
         "id": message.id,
         "date": date.isoformat() if date else None,
         "sender_id": getattr(message, "sender_id", None),
-        "sender_name": sender_name,
+        "sender_name": display_name,
         "text": text,
         "text_truncated": was_truncated,
         "link": message_link(chat_username, chat_internal_id, message.id),
@@ -44,9 +73,10 @@ def render_message(
 def _describe_media(media: Any) -> dict | None:
     if media is None:
         return None
+    file_name = getattr(media, "file_name", None)
     return {
         "type": getattr(media, "mime_type", None) or type(media).__name__,
-        "file_name": getattr(media, "file_name", None),
+        "file_name": safe_name(file_name) if file_name else None,
         "size": getattr(media, "size", None),
     }
 

@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import getpass
 import os
+import pathlib
 import sys
 from collections.abc import Mapping
 
@@ -49,20 +50,28 @@ async def _authorise(config: Config) -> int:
         raise MissingCredentials()
 
     client = TelegramClient(str(config.session_path), config.api_id, config.api_hash)
-    await client.start(
-        phone=lambda: input("Phone number, with country code: "),
-        code_callback=lambda: input("Login code Telegram just sent you: "),
-        password=lambda: getpass.getpass("Two-factor password (input hidden): "),
-    )
     try:
+        # connect() is what creates the session file; tighten it before anything
+        # can go wrong in the prompts and leave it world-readable.
+        await client.connect()
+        _tighten(config.session_path)
+        await client.start(
+            phone=lambda: input("Phone number, with country code: "),
+            code_callback=lambda: input("Login code Telegram just sent you: "),
+            password=lambda: getpass.getpass("Two-factor password (input hidden): "),
+        )
         me = await client.get_me()
-        if config.session_path.exists():
-            config.session_path.chmod(0o600)
         print(f"Authorised as {utils.get_display_name(me)} (id {me.id}).")
         print(f"Session stored at {config.session_path}")
         return 0
     finally:
+        _tighten(config.session_path)
         await client.disconnect()
+
+
+def _tighten(path: pathlib.Path) -> None:
+    if path.exists():
+        path.chmod(0o600)
 
 
 def main(argv: list[str] | None = None) -> int:

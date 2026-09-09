@@ -98,3 +98,55 @@ def test_state_directory_is_private(first_run):
 
     state, _, _ = first_run
     assert stat.S_IMODE(state.stat().st_mode) == 0o700
+
+
+def test_an_interpreter_without_the_dependencies_is_refused_not_worked_around(tmp_path):
+    environment = {
+        **os.environ,
+        "TELEGRAM_STATE_DIR": str(tmp_path),
+        "TELEGRAM_PLUGIN_PYTHON": "/usr/bin/python3",
+    }
+    result = subprocess.run(
+        [str(LAUNCHER)],
+        input=INITIALIZE,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "cannot import telethon and mcp" in result.stderr
+    assert "pip install" in result.stderr
+    assert not (tmp_path / "venv").exists(), "it must not build a venv behind the override"
+
+
+def test_it_refuses_to_delete_something_that_is_not_its_own_venv(tmp_path):
+    impostor = tmp_path / "venv"
+    impostor.mkdir()
+    (impostor / "important.txt").write_text("not a virtualenv")
+    result = _run(tmp_path)
+    assert result.returncode != 0
+    assert "pyvenv.cfg" in result.stderr
+    assert (impostor / "important.txt").read_text() == "not a virtualenv"
+
+
+@pytest.fixture(scope="module")
+def own_state(tmp_path_factory):
+    state = tmp_path_factory.mktemp("wiped")
+    _run(state)
+    return state
+
+
+def test_a_wiped_site_packages_is_reinstalled_despite_a_matching_stamp(own_state):
+    site = next((own_state / "venv" / "lib").glob("python*")) / "site-packages"
+    for package in ("telethon", "mcp"):
+        for path in site.glob(f"{package}*"):
+            subprocess.run(["rm", "-rf", str(path)], check=True)
+    stamp = own_state / "venv" / ".deps-stamp"
+    assert stamp.exists(), "the stamp must survive, or this proves nothing"
+
+    again = _run(own_state)
+    assert "installing dependencies" in again.stderr.lower()
+    lines = [line for line in again.stdout.splitlines() if line.strip()]
+    assert json.loads(lines[0])["jsonrpc"] == "2.0"

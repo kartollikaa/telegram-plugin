@@ -6,10 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-DEPENDENCIES: tuple[str, ...] = ("telethon>=1.36", "mcp>=2,<3")
+DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2", "mcp>=2,<3")
 
 DEFAULT_STATE_SUBPATH = ".local/state/telegram-plugin"
 DEFAULT_SESSION_NAME = "telegram"
+DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+DEFAULT_SEND_LIMIT = 20
 
 
 def parse_dotenv(text: str) -> dict[str, str]:
@@ -34,6 +36,8 @@ class Config:
     session_name: str
     allow_send: bool
     output_root: Path
+    max_download_bytes: int
+    send_limit: int
 
     @property
     def session_path(self) -> Path:
@@ -53,17 +57,27 @@ def load_config(env: Mapping[str, str], dotenv_text: str | None = None) -> Confi
     home = Path(env.get("HOME") or Path.home())
     state_raw = value("TELEGRAM_STATE_DIR")
     state_dir = Path(state_raw) if state_raw else home / DEFAULT_STATE_SUBPATH
-    api_id = value("TELEGRAM_API_ID")
     output_raw = value("TELEGRAM_OUTPUT_ROOT")
 
     return Config(
-        api_id=int(api_id) if api_id else None,
+        api_id=_as_int(value("TELEGRAM_API_ID")),
         api_hash=value("TELEGRAM_API_HASH"),
         state_dir=state_dir,
         session_name=value("TELEGRAM_SESSION_NAME") or DEFAULT_SESSION_NAME,
         allow_send=value("TELEGRAM_PLUGIN_ALLOW_SEND") == "1",
         output_root=Path(output_raw) if output_raw else state_dir / "downloads",
+        max_download_bytes=_as_int(value("TELEGRAM_MAX_DOWNLOAD_BYTES"))
+        or DEFAULT_MAX_DOWNLOAD_BYTES,
+        send_limit=_as_int(value("TELEGRAM_PLUGIN_SEND_LIMIT")) or DEFAULT_SEND_LIMIT,
     )
+
+
+def _as_int(raw: str | None) -> int | None:
+    """A malformed number must not crash startup with the value in the traceback."""
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        return None
 
 
 def load_config_from_environment(env: Mapping[str, str]) -> Config:

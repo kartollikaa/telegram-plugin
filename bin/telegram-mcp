@@ -2,19 +2,22 @@
 # Universal entry point: any MCP host can point at this file.
 #
 # Stdout is the MCP channel and must carry nothing else, so we stash the real
-# stdout on fd 3 and route our own chatter — including pip's — to stderr.
+# stdout on fd 3 and route our own chatter — including pip's — to stderr. Every
+# subprocess is started with fd 3 closed, so nothing it does can reach the
+# protocol channel either.
 exec 3>&1 1>&2
 set -e
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
-DEPS="telethon>=1.36 mcp>=2,<3"
+DEPS="telethon>=1.42,<2 mcp>=2,<3"
 
 mkdir -p "$STATE"
 chmod 700 "$STATE"
 
 VENV="$STATE/venv"
-STAMP="$VENV/.deps-sha"
+STAMP="$VENV/.deps-stamp"
+LOCKDIR="$STATE/.install.lock"
 
 digest() {
     if command -v shasum >/dev/null 2>&1; then
@@ -26,39 +29,83 @@ digest() {
     fi
 }
 
-install_into() {
-    "$1" -m pip install --quiet --disable-pip-version-check --upgrade pip
-    # Word splitting is what we want here: DEPS is a list of requirements.
-    # shellcheck disable=SC2086
-    "$1" -m pip install --quiet --disable-pip-version-check $DEPS
+# The plugin version is part of the stamp: an update should re-resolve
+# dependencies, otherwise a machine keeps whatever it first installed for ever.
+VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)
+WANTED=$(digest "$DEPS|$VERSION")
+
+has_dependencies() {
+    "$1" -c 'import telethon, mcp' >/dev/null 2>&1 3>&-
 }
 
-WANTED=$(digest "$DEPS")
+refuse_to_delete_a_non_venv() {
+    if [ -e "$1" ] && [ ! -f "$1/pyvenv.cfg" ]; then
+        echo "[telegram-plugin] refusing to delete $1: no pyvenv.cfg, so it is not a" >&2
+        echo "[telegram-plugin] virtualenv this plugin created. Check TELEGRAM_STATE_DIR." >&2
+        exit 1
+    fi
+}
+
+acquire_install_lock() {
+    waited=0
+    while ! mkdir "$LOCKDIR" 2>/dev/null; do
+        waited=$((waited + 1))
+        if [ "$waited" -gt 600 ]; then
+            echo "[telegram-plugin] another process has been installing for 10 minutes;" >&2
+            echo "[telegram-plugin] remove $LOCKDIR if that process is gone." >&2
+            exit 1
+        fi
+        sleep 1
+    done
+    trap 'rmdir "$LOCKDIR" 2>/dev/null || true' EXIT INT TERM
+}
+
+install_into() {
+    "$1" -m pip install --quiet --disable-pip-version-check --upgrade pip 3>&-
+    # Word splitting is what we want here: DEPS is a list of requirements.
+    # shellcheck disable=SC2086
+    "$1" -m pip install --quiet --disable-pip-version-check $DEPS 3>&-
+}
 
 if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
     PYTHON=$TELEGRAM_PLUGIN_PYTHON
-elif [ -x "$VENV/bin/python" ]; then
-    PYTHON="$VENV/bin/python"
-    if [ "$(cat "$STAMP" 2>/dev/null)" != "$WANTED" ]; then
-        echo "[telegram-plugin] dependency list changed, updating $VENV" >&2
-        install_into "$PYTHON"
-        printf '%s' "$WANTED" >"$STAMP"
-    fi
-else
-    echo "[telegram-plugin] installing dependencies into $VENV (first run only)" >&2
-    rm -rf "$VENV.tmp"
-    if ! python3 -m venv "$VENV.tmp"; then
-        echo "[telegram-plugin] cannot create a virtualenv: python3 -m venv failed." >&2
-        echo "[telegram-plugin] On Debian/Ubuntu install python3-venv, or set" >&2
-        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON to an interpreter that already has:" >&2
-        echo "[telegram-plugin]   $DEPS" >&2
+    if ! has_dependencies "$PYTHON"; then
+        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon and mcp." >&2
+        echo "[telegram-plugin] Install them there:" >&2
+        echo "[telegram-plugin]   $PYTHON -m pip install $DEPS" >&2
+        echo "[telegram-plugin] or unset the variable and let the plugin build its own." >&2
         exit 1
     fi
-    install_into "$VENV.tmp/bin/python"
-    printf '%s' "$WANTED" >"$VENV.tmp/.deps-sha"
-    rm -rf "$VENV"
-    mv "$VENV.tmp" "$VENV"
+else
     PYTHON="$VENV/bin/python"
+    # Gate on behaviour as well as on the stamp: a wiped site-packages leaves both
+    # the interpreter and the stamp in place, and execing it would hang the host.
+    if [ ! -x "$PYTHON" ] ||
+        [ "$(cat "$STAMP" 2>/dev/null)" != "$WANTED" ] ||
+        ! has_dependencies "$PYTHON"; then
+        acquire_install_lock
+        if [ ! -x "$PYTHON" ] ||
+            [ "$(cat "$STAMP" 2>/dev/null)" != "$WANTED" ] ||
+            ! has_dependencies "$PYTHON"; then
+            echo "[telegram-plugin] installing dependencies into $VENV" >&2
+            STAGE=$(mktemp -d "$STATE/venv.XXXXXX")
+            if ! python3 -m venv "$STAGE" 3>&-; then
+                rm -rf "$STAGE"
+                echo "[telegram-plugin] cannot create a virtualenv: python3 -m venv failed." >&2
+                echo "[telegram-plugin] On Debian/Ubuntu install python3-venv, or point" >&2
+                echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON at an interpreter that has:" >&2
+                echo "[telegram-plugin]   $DEPS" >&2
+                exit 1
+            fi
+            install_into "$STAGE/bin/python"
+            printf '%s' "$WANTED" >"$STAGE/.deps-stamp"
+            refuse_to_delete_a_non_venv "$VENV"
+            rm -rf "$VENV"
+            mv "$STAGE" "$VENV"
+        fi
+        rmdir "$LOCKDIR" 2>/dev/null || true
+        trap - EXIT INT TERM
+    fi
 fi
 
 PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"

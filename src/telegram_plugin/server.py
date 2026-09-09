@@ -13,7 +13,7 @@ from pydantic import Field
 
 from telegram_plugin.client import TelegramGateway, TelethonGateway, ensure_state_dir
 from telegram_plugin.config import Config, load_config_from_environment
-from telegram_plugin.errors import describe
+from telegram_plugin.errors import SendLimitReached, describe
 from telegram_plugin.jsonl import write_jsonl
 from telegram_plugin.log import config_summary, log
 from telegram_plugin.paging import paginate
@@ -132,15 +132,17 @@ def build_server(config: Config, gateway: TelegramGateway) -> MCPServer:
         return await _guarded(_download_media(gateway, config, chat, message_id, dest_dir))
 
     if config.allow_send:
+        sent_so_far = {"count": 0}
 
         @server.tool(
             description=(
-                "Send a text message. Only ever because the operator asked in their own session."
+                "Send a text message. Only ever because the operator asked in their own "
+                "session. The result names the resolved recipient, so a wrong one is visible."
             ),
             annotations=_SENDING,
         )
         async def send_message(chat: str, text: str) -> dict:
-            return await _guarded(_send_message(gateway, chat, text))
+            return await _guarded(_send_message(gateway, config, sent_so_far, chat, text))
 
     return server
 
@@ -154,15 +156,17 @@ async def _guarded(awaitable: Awaitable[dict]) -> dict:
 
 
 async def _list_dialogs(gateway: TelegramGateway, query: str | None, limit: int) -> dict:
-    rows = await gateway.dialogs(query, limit)
-    return {
-        "items": rows,
-        "returned": len(rows),
-        "note": (
-            f"{len(rows)} chats shown (limit {limit}). Narrow with query= if the one you want "
-            "is missing."
-        ),
-    }
+    batch = await gateway.dialogs(query, limit)
+    note = f"{len(batch.rows)} chats shown (limit {limit})."
+    if batch.scan_truncated:
+        note += (
+            f" Scanning stopped after {batch.scanned} chats to stay cheap — narrow with query=."
+        )
+    elif not batch.rows and batch.scanned:
+        note += f" Nothing matched among the {batch.scanned} chats scanned."
+    else:
+        note += " Narrow with query= if the one you want is missing."
+    return {"items": batch.rows, "returned": len(batch.rows), "note": note}
 
 
 async def _resolve_chat(gateway: TelegramGateway, ref: str) -> dict:
@@ -219,8 +223,14 @@ async def _download_media(
     return {"path": await gateway.download(ref, message_id, destination)}
 
 
-async def _send_message(gateway: TelegramGateway, chat: str, text: str) -> dict:
-    return await gateway.send(parse_chat_ref(chat), text)
+async def _send_message(
+    gateway: TelegramGateway, config: Config, sent_so_far: dict, chat: str, text: str
+) -> dict:
+    if sent_so_far["count"] >= config.send_limit:
+        raise SendLimitReached(config.send_limit)
+    result = await gateway.send(parse_chat_ref(chat), text)
+    sent_so_far["count"] += 1
+    return {**result, "sent_so_far": sent_so_far["count"], "send_limit": config.send_limit}
 
 
 def _forward_envelope(batch, limit: int) -> dict:

@@ -51,3 +51,15 @@ def test_dependabot_watches_both_ecosystems():
     text = (REPO / ".github/dependabot.yml").read_text()
     assert "package-ecosystem: pip" in text
     assert "package-ecosystem: github-actions" in text
+
+
+def test_the_allowlist_explains_itself_and_stays_short():
+    allowlist = (REPO / ".security-allowlist").read_text()
+    entries = [
+        line
+        for line in allowlist.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert len(entries) <= 3, "every entry is a hole in the history sweep"
+    assert "#" in allowlist, "each entry needs a reason above it"
+    assert ".security-allowlist" in (REPO / "scripts/security-check.sh").read_text()

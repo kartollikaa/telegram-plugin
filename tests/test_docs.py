@@ -29,6 +29,8 @@ def test_readme_documents_every_environment_variable():
         "TELEGRAM_OUTPUT_ROOT",
         "TELEGRAM_PLUGIN_PYTHON",
         "TELEGRAM_PLUGIN_ALLOW_SEND",
+        "TELEGRAM_MAX_DOWNLOAD_BYTES",
+        "TELEGRAM_PLUGIN_SEND_LIMIT",
     ):
         assert variable in README, variable
         assert variable in ENV_EXAMPLE, variable
@@ -48,10 +50,31 @@ def test_env_example_carries_names_without_values():
             assert stripped.endswith("="), stripped
 
 
-def test_no_personal_data_in_documentation():
-    for text in (README, ENV_EXAMPLE):
-        assert "/Users/" not in text
-        assert "dmitrijmaksimov" not in text
+def test_no_personal_data_in_any_prose_in_the_repository():
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.md", "*.example", "*.yml"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert tracked, "the sweep must have something to sweep"
+    for name in tracked:
+        text = (REPO / name).read_text()
+        assert "/Users/" not in text, name
+        assert "/home/" not in text, name
+
+
+def test_the_design_document_documents_every_environment_variable():
+    design = (REPO / "docs/design.md").read_text()
+    for variable in (
+        "TELEGRAM_OUTPUT_ROOT",
+        "TELEGRAM_MAX_DOWNLOAD_BYTES",
+        "TELEGRAM_PLUGIN_SEND_LIMIT",
+    ):
+        assert variable in design, variable
 
 
 def test_readme_warns_about_the_cold_first_run():

@@ -56,6 +56,23 @@ class NoSuchMedia(TelegramPluginError):
         super().__init__(f"Message {message_id} carries no downloadable media.")
 
 
+class MediaTooLarge(TelegramPluginError):
+    def __init__(self, size: int, cap: int) -> None:
+        super().__init__(
+            f"That attachment is {size} bytes and the ceiling is {cap}. Nothing was "
+            "downloaded. Raise TELEGRAM_MAX_DOWNLOAD_BYTES only if you actually want a "
+            "file that size on this disk."
+        )
+
+
+class SendLimitReached(TelegramPluginError):
+    def __init__(self, limit: int) -> None:
+        super().__init__(
+            f"This server process has already sent {limit} messages, which is its ceiling. "
+            "Restart the session if the operator genuinely wants to send more."
+        )
+
+
 def describe(exc: BaseException) -> str:
     seconds = getattr(exc, "seconds", None)
     if isinstance(seconds, int) and "flood" in type(exc).__name__.lower():

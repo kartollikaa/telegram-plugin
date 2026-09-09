@@ -4,6 +4,8 @@
 !.env.example
 *.session
 *.session-journal
+*.session-wal
+*.session-shm
 
 # Anywhere a run might land output inside a checkout
 downloads/

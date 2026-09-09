@@ -158,7 +158,9 @@ yours.
 | `send_message(chat, text)` | **only registered when `TELEGRAM_PLUGIN_ALLOW_SEND=1`** |
 
 `read_messages` accepts `min_id`, `max_id`, `since`, `until`, `from_user` and
-`media_only`. Each message comes back with its id, an ISO date, the sender's id
+`media_only`; `search_messages` pages backwards on `max_id`, because search
+results arrive newest first. An empty result says whether the range was empty or
+the filters excluded everything in it — the two are not the same answer. Each message comes back with its id, an ISO date, the sender's id
 and display name, the text, a link to the message, and for attachments the type,
 file name and size — never the bytes. Bytes arrive only through
 `download_media`, one file per call.
@@ -179,6 +181,12 @@ do damage on a misread instruction.
 - **Writes are confined.** `out_path` and `dest_dir` must stay inside
   `TELEGRAM_OUTPUT_ROOT` (by default the state directory's `downloads/`), and an
   existing file is never overwritten silently.
+- **Attachments have a size ceiling** (`TELEGRAM_MAX_DOWNLOAD_BYTES`), checked
+  before anything is downloaded, and a sender-chosen file name is stripped of
+  shell metacharacters and separators before it reaches the agent as a path.
+- **Sending is capped and echoed.** One server process may send
+  `TELEGRAM_PLUGIN_SEND_LIMIT` messages, and every send returns the resolved
+  recipient's id and title so a wrong recipient is visible after the fact.
 - **No destructive tools exist.** Not gated — absent. Deleting, leaving, kicking,
   forwarding and editing are things you do in a Telegram client.
 - **Resolving an invite link never joins the chat.** If the account is not a
@@ -196,8 +204,10 @@ do damage on a misread instruction.
 | `TELEGRAM_STATE_DIR` | session, `.env`, virtualenv, downloads | `~/.local/state/telegram-plugin` |
 | `TELEGRAM_SESSION_NAME` | session file basename | `telegram` |
 | `TELEGRAM_OUTPUT_ROOT` | where tools may write | `$TELEGRAM_STATE_DIR/downloads` |
+| `TELEGRAM_MAX_DOWNLOAD_BYTES` | refuse attachments above this | `104857600` (100 MiB) |
 | `TELEGRAM_PLUGIN_PYTHON` | interpreter override, skips the virtualenv | unset |
 | `TELEGRAM_PLUGIN_ALLOW_SEND` | `1` registers `send_message` | unset |
+| `TELEGRAM_PLUGIN_SEND_LIMIT` | messages one server process may send | `20` |
 
 The state directory is created `0700`, and `.env` and the session file `0600`.
 
@@ -209,7 +219,11 @@ one directory. With it, an agent can send messages from your account, under your
 name, to anyone the account can reach — while deciding what to send partly from
 text other people wrote. Nothing can un-send a message.
 
-So set it for the one session that needs it rather than in your shell profile:
+The tool layer narrows this only a little — a per-process send cap and an
+echoed recipient. What stops a manipulated agent from sending is mostly the
+instruction in the bundled skill, in the same context window as the attacker's
+text. So set the variable for the one session that needs it rather than in your
+shell profile:
 
 ```bash
 TELEGRAM_PLUGIN_ALLOW_SEND=1 claude

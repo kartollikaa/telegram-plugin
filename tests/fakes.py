@@ -41,14 +41,15 @@ class FakeGateway:
         self._check()
         return {"id": 42, "name": "Test Account", "username": "tester", "is_bot": False}
 
-    async def dialogs(self, query: str | None, limit: int) -> list[dict]:
+    async def dialogs(self, query: str | None, limit: int) -> Batch:
         self._check()
         all_dialogs = [
             {"id": -1001, "title": "Alpha", "type": "channel", "username": "alpha", "unread": 0},
             {"id": -1002, "title": "Beta", "type": "group", "username": None, "unread": 3},
         ]
         needle = (query or "").casefold()
-        return [d for d in all_dialogs if needle in d["title"].casefold()][:limit]
+        matched = [d for d in all_dialogs if needle in d["title"].casefold()][:limit]
+        return Batch(rows=matched, scanned=len(all_dialogs))
 
     async def resolve(self, ref: ChatRef) -> dict:
         self._check()
@@ -97,4 +98,4 @@ class FakeGateway:
     async def send(self, ref: ChatRef, text: str) -> dict:
         self._check()
         self.sent.append((str(ref.value), text))
-        return {"id": 999, "chat_id": -1001}
+        return {"id": 999, "chat_id": -1001, "chat_title": "Alpha"}

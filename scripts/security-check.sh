@@ -47,20 +47,32 @@ if git grep -InE "$SHAPES" -- .; then
 fi
 
 note "secret sweep — nothing secret is tracked at all"
-if git ls-files | grep -E '(^|/)\.env$|\.session(-journal)?$'; then
+if git ls-files | grep -E '(^|/)\.env$|\.session(-journal|-wal|-shm)?$'; then
     echo "the files above must never be tracked" >&2
     fail secret-files-tracked
 fi
 
-# History needs its own patterns. A bare hex string is too common in fixtures to
-# ban outright, but an *assignment* of one is not — and an added-then-removed
-# commit is exactly the case the working-tree sweep above cannot see.
-HISTORY_SHAPES='\+?\b[78][0-9]{10}\b|[0-9]{8,10}:[A-Za-z0-9_-]{35}|sk-[A-Za-z0-9]{20,}'
-HISTORY_SHAPES="$HISTORY_SHAPES"'|(api[_-]?hash|api[_-]?id|token|secret)[[:space:]]*[=:][[:space:]]*.?[0-9a-f]{32}'
-
+# History carries what the working tree no longer shows: a credential that was
+# committed and then removed passes every tree-level check. So the history sweep
+# uses the same shapes, bare hex included, and known-innocent values are named
+# explicitly in .security-allowlist rather than left as a blind spot.
 note "secret sweep — history"
-if git log -p --all | grep -qiE "$HISTORY_SHAPES"; then
-    echo "history contains an assigned credential, or something phone- or token-shaped" >&2
+ALLOWLIST="$ROOT/.security-allowlist"
+FILTER=$(mktemp)
+if [ -f "$ALLOWLIST" ]; then
+    grep -v '^[[:space:]]*#' "$ALLOWLIST" | grep -v '^[[:space:]]*$' >"$FILTER" || true
+fi
+# Only added/removed diff lines: `git log -p` prints each commit's own 40-hex
+# SHA in its header, whose first 32 characters match the api-hash shape.
+HISTORY_HITS=$(
+    git log -p --all --format='' | grep '^[+-]' | grep -ohE "$SHAPES" | sort -u |
+        { if [ -s "$FILTER" ]; then grep -vixFf "$FILTER" || true; else cat; fi; }
+)
+rm -f "$FILTER"
+if [ -n "$HISTORY_HITS" ]; then
+    echo "history contains credential-shaped strings that are not allowlisted:" >&2
+    printf '%s\n' "$HISTORY_HITS" | sed 's/./*/g' >&2
+    echo "(masked above; find them with: git log -p --all | grep -nE \"\$SHAPES\")" >&2
     fail secrets-in-history
 fi
 
