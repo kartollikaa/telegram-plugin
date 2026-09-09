@@ -1,7 +1,7 @@
 #!/bin/sh
 # Interactive login. Talks to a human, so stdout stays as it is.
 set -e
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
 VENV="$STATE/venv"
 

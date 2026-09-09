@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from telethon import TelegramClient, utils
 
 from telegram_plugin.client import ensure_state_dir, session_lock
-from telegram_plugin.config import Config, load_config, load_config_from_environment
+from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import MissingCredentials, SessionLocked, describe
 
 

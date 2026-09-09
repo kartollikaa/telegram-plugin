@@ -30,3 +30,6 @@ filterwarnings = ["error"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
