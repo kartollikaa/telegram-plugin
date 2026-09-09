@@ -236,14 +236,23 @@ async def _send_message(
 def _forward_envelope(batch, limit: int) -> dict:
     """History reads forwards: keep the oldest of the page, continue on min_id."""
     page = paginate([row["id"] for row in batch.rows], limit)
+    items = batch.rows[: len(page.items)]
     return envelope(
-        batch.rows[: len(page.items)],
+        items,
         has_more=page.has_more,
         next_cursor=page.next_cursor,
         cursor_field="min_id",
         scanned=batch.scanned,
         scan_truncated=batch.scan_truncated,
+        remaining=_remaining(batch, len(items)),
+        total=batch.total,
     )
+
+
+def _remaining(batch, returned: int) -> int | None:
+    if batch.total is None or not batch.total_is_exact:
+        return None
+    return max(batch.total - returned, 0)
 
 
 def _backward_envelope(batch, limit: int) -> dict:
@@ -261,6 +270,8 @@ def _backward_envelope(batch, limit: int) -> dict:
         next_cursor=items[0]["id"] if items and has_more else None,
         cursor_field="max_id",
         scanned=batch.scanned,
+        remaining=_remaining(batch, len(items)),
+        total=batch.total,
     )
 
 

@@ -72,7 +72,15 @@ class FakeGateway:
             accepted.append(row)
             if limit and len(accepted) >= limit:
                 break
-        return Batch(rows=accepted, scanned=scanned)
+        bounded = bool(
+            criteria.get("min_id") or criteria.get("max_id") or criteria.get("media_only")
+        )
+        return Batch(
+            rows=accepted,
+            scanned=scanned,
+            total=len(self.rows),
+            total_is_exact=not bounded,
+        )
 
     async def search(self, query: str, ref: ChatRef | None, **criteria) -> Batch:
         """Newest first, like Telegram's own search, then sorted ascending."""
@@ -83,7 +91,13 @@ class FakeGateway:
             matches = [r for r in matches if r["id"] < max_id]
         limit = criteria.get("limit")
         page = list(reversed(matches))[:limit] if limit else list(reversed(matches))
-        return Batch(rows=sorted(page, key=lambda r: r["id"]), scanned=len(page))
+        in_one_chat = ref is not None
+        return Batch(
+            rows=sorted(page, key=lambda r: r["id"]),
+            scanned=len(page),
+            total=len(matches) if in_one_chat else None,
+            total_is_exact=in_one_chat and not max_id,
+        )
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:
         self._check()

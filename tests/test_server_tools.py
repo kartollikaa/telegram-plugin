@@ -180,3 +180,41 @@ async def test_dialogs_says_when_nothing_matched_rather_than_looking_empty():
     result = _payload(await _server().call_tool("list_dialogs", {"query": "nothing-like-this"}))
     assert result["returned"] == 0
     assert "Nothing matched" in result["note"]
+
+
+async def test_the_reply_says_how_many_messages_are_left():
+    payload = _payload(
+        await _server().call_tool("read_messages", {"chat": "@somechannel", "limit": 4})
+    )
+    assert payload["remaining"] == 8, "12 in the fake, 4 returned"
+    assert "8 more available" in payload["note"]
+
+
+async def test_a_bounded_read_does_not_invent_a_remaining_count():
+    payload = _payload(
+        await _server().call_tool(
+            "read_messages", {"chat": "@somechannel", "limit": 4, "min_id": 2}
+        )
+    )
+    assert "remaining" not in payload
+    assert "in total" in payload["note"]
+
+
+async def test_a_global_search_does_not_claim_a_match_count():
+    # Telegram's global search total is not a count: measured live, it reported
+    # more matches for a rare word than for a near-universal substring.
+    payload = _payload(
+        await _server().call_tool("search_messages", {"query": "message", "limit": 3})
+    )
+    assert "remaining" not in payload
+    assert "not known without scanning" in payload["note"]
+
+
+async def test_a_search_inside_one_chat_does_report_the_count():
+    payload = _payload(
+        await _server().call_tool(
+            "search_messages", {"query": "message", "chat": "@somechannel", "limit": 3}
+        )
+    )
+    assert payload["remaining"] == 9
+    assert "9 more available" in payload["note"]

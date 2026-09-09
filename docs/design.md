@@ -165,7 +165,13 @@ constraints are part of the contract, not advice:
   for that id.
 - **The response is an envelope**, not a bare list: items, how many were
   returned, whether more exist, the cursor to continue from, and a note stating
-  plainly what was left out.
+  plainly what was left out. The remaining count is reported only where it is
+  actually knowable: an unbounded, unfiltered read, or a search inside one chat.
+  Telegram's own total ignores id bounds, knows nothing about filters applied
+  here, and is not a count at all for a global search — measured on a live
+  account, a global search claimed 59988 matches for one word and 29500 for a
+  substring of nearly every message. Where the number would be invented, the
+  note says so instead.
 - **Cursor pagination by id.** `next_cursor` is the last id returned; the caller
   continues with `min_id=next_cursor`. There is no "ask again, but bigger".
 - **`out_path` writes JSONL to disk** and returns only the path, the line count

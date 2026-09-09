@@ -77,14 +77,28 @@ if [ -f "$ALLOWLIST" ]; then
     grep -v '^[[:space:]]*#' "$ALLOWLIST" | grep -v '^[[:space:]]*$' >"$FILTER" || true
 fi
 
-drop_allowlisted() {
-    if [ -s "$FILTER" ]; then grep -vF -f "$FILTER" || true; else cat; fi
+# Filter by the matched VALUE, never by the line: dropping whole lines would hide
+# a real secret that happens to sit beside an allowlisted fixture.
+keep_unexplained() {
+    while IFS= read -r hit; do
+        value=$(printf '%s' "$hit" | grep -ohE "$SHAPES" | head -1)
+        if [ -s "$FILTER" ] && printf '%s\n' "$value" | grep -qixFf "$FILTER"; then
+            continue
+        fi
+        printf '%s\n' "$hit"
+    done
 }
 
 note "secret sweep — tracked files"
-TREE_HITS=$(git grep -InE "$SHAPES" -- . ':(exclude).security-allowlist' | drop_allowlisted)
+TREE_HITS=$(
+    git grep -ohE "$SHAPES" -- . ':(exclude).security-allowlist' | sort -u |
+        { if [ -s "$FILTER" ]; then grep -vixFf "$FILTER" || true; else cat; fi; }
+)
 if [ -n "$TREE_HITS" ]; then
-    printf '%s\n' "$TREE_HITS" >&2
+    TREE_LINES=$(git grep -InE "$SHAPES" -- . ':(exclude).security-allowlist' | keep_unexplained)
+fi
+if [ -n "$TREE_HITS" ]; then
+    printf '%s\n' "${TREE_LINES:-$TREE_HITS}" >&2
     echo "the lines above look like credentials" >&2
     fail secrets-in-tree
 fi

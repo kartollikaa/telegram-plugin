@@ -43,6 +43,15 @@ class Batch:
     rows: list[dict] = field(default_factory=list)
     scanned: int = 0
     scan_truncated: bool = False
+    total: int | None = None
+    total_is_exact: bool = False
+    """`total` counts exactly the set this request ranged over.
+
+    Telegram's own total ignores id bounds — measured: 430 for a chat with and
+    without `min_id` — and knows nothing about filters applied here. So it is
+    only a remaining count when neither was in play; otherwise it is context,
+    and saying more would be inventing a number.
+    """
 
 
 def _scan_cap(limit: int | None) -> int:
@@ -252,7 +261,31 @@ class TelethonGateway:
             if scanned >= cap:
                 truncated = True
                 break
-        return Batch(rows=rows, scanned=scanned, scan_truncated=truncated)
+
+        bounded = bool(
+            criteria.get("min_id")
+            or criteria.get("max_id")
+            or since
+            or until
+            or media_only
+            or criteria.get("from_user")
+        )
+        total = await self._total(client, entity) if limit and len(rows) >= limit else None
+        return Batch(
+            rows=rows,
+            scanned=scanned,
+            scan_truncated=truncated,
+            total=total,
+            total_is_exact=total is not None and not bounded,
+        )
+
+    async def _total(self, client: TelegramClient, entity: Any, **criteria: Any) -> int | None:
+        """One extra round trip, and only when there is more to report."""
+        try:
+            probe = await client.get_messages(entity, limit=1, **criteria)
+        except Exception:  # noqa: BLE001
+            return None  # a count is a nicety; never fail a read for it
+        return getattr(probe, "total", None)
 
     async def search(self, query: str, ref: ChatRef | None, **criteria: Any) -> Batch:
         """Search results arrive newest first, so paging runs backwards on max_id."""
@@ -271,7 +304,21 @@ class TelethonGateway:
             scanned += 1
             rows.append(self._render(message, username, internal))
         rows.sort(key=lambda row: row["id"])
-        return Batch(rows=rows, scanned=scanned)
+        limit = criteria.get("limit")
+        # Only an in-chat search reports a count worth repeating. Measured on a
+        # live account: a global search claimed 59988 matches for "Telegram" and
+        # 29500 for "a", which cannot both be true — so globally there is no count.
+        total = (
+            await self._total(client, entity, search=query)
+            if entity is not None and limit and len(rows) >= limit
+            else None
+        )
+        return Batch(
+            rows=rows,
+            scanned=scanned,
+            total=total,
+            total_is_exact=total is not None and not criteria.get("max_id"),
+        )
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:
         client = await self._connected()

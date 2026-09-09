@@ -4,6 +4,25 @@ from telegram_plugin.client import ensure_state_dir
 from telegram_plugin.config import load_config
 
 
+def test_state_and_session_modes(tmp_path):
+    """The criterion names this node: state directory 0700, session and .env 0600."""
+    state = tmp_path / "state"
+    state.mkdir()
+    session = state / "telegram.session"
+    session.write_bytes(b"")
+    session.chmod(0o666)
+    dotenv = state / ".env"
+    dotenv.write_text("TELEGRAM_API_ID=1\n")
+    dotenv.chmod(0o644)
+
+    config = load_config({"TELEGRAM_STATE_DIR": str(state)})
+    ensure_state_dir(config)
+
+    assert stat.S_IMODE(state.stat().st_mode) == 0o700
+    assert stat.S_IMODE(session.stat().st_mode) == 0o600
+    assert stat.S_IMODE(dotenv.stat().st_mode) == 0o600
+
+
 def test_state_dir_is_private(tmp_path):
     config = load_config({"TELEGRAM_STATE_DIR": str(tmp_path / "state")})
     ensure_state_dir(config)

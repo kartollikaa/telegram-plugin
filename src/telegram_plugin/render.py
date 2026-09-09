@@ -89,13 +89,21 @@ def envelope(
     cursor_field: str = "min_id",
     scanned: int = 0,
     scan_truncated: bool = False,
+    remaining: int | None = None,
+    total: int | None = None,
 ) -> dict:
-    """`note` never fabricates a remaining count — we stop early and do not know it."""
+    """`note` states the remaining count when it is known, and says so when it is not."""
     if has_more:
+        if remaining is not None:
+            left = f"{remaining} more available"
+        elif total is not None:
+            left = f"more available (this chat holds {total} messages in total)"
+        else:
+            left = "more available (the count in this range is not known without scanning it)"
         note = (
-            f"{len(items)} returned, more available — continue with "
-            f"{cursor_field}={next_cursor}, or pass out_path to write the whole range to a "
-            "JSONL file instead of into this conversation."
+            f"{len(items)} returned, {left} — continue with {cursor_field}={next_cursor}, "
+            "or pass out_path to write the whole range to a JSONL file instead of into this "
+            "conversation."
         )
     elif items:
         note = f"{len(items)} returned; nothing left in this range."
@@ -111,10 +119,13 @@ def envelope(
             f" Scanning stopped at {scanned} messages to stay cheap; narrow the range with "
             "min_id or max_id and ask again."
         )
-    return {
+    result = {
         "items": items,
         "returned": len(items),
         "has_more": has_more,
         "next_cursor": next_cursor,
         "note": note,
     }
+    if remaining is not None:
+        result["remaining"] = remaining
+    return result

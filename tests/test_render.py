@@ -49,6 +49,24 @@ def test_truncate_returns_flag():
     assert truncate("abcdef", 3) == ("abc", True)
 
 
+def test_envelope_reports_what_was_omitted():
+    """The criterion: the note must say how many are left outside the reply."""
+    env = envelope([{"id": 1}], has_more=True, next_cursor=1, remaining=209, total=210)
+    assert env["remaining"] == 209
+    assert "209 more available" in env["note"]
+    assert "min_id=1" in env["note"]
+
+
+def test_envelope_says_so_when_the_remaining_count_is_not_knowable():
+    # With id bounds or client-side filters, Telegram's own total counts a
+    # different set, so a number here would be invented rather than reported.
+    bounded = envelope([{"id": 5}], has_more=True, next_cursor=5, total=430)
+    assert "remaining" not in bounded
+    assert "430 messages in total" in bounded["note"]
+    blind = envelope([{"id": 5}], has_more=True, next_cursor=5)
+    assert "not known without scanning" in blind["note"]
+
+
 def test_envelope_points_at_the_next_page_without_inventing_a_count():
     env = envelope([{"id": 1}], has_more=True, next_cursor=1)
     assert env["returned"] == 1
