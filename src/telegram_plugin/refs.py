@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from telegram_plugin.errors import TelegramPluginError
+
 ACCEPTED = (
     "https://t.me/<name>[/<message id>], https://t.me/c/<internal id>/<message id>, "
     "https://t.me/+<invite>, @<name>, or a numeric chat id"
@@ -22,7 +24,7 @@ _PEER = re.compile(r"^-?\d+$")
 _BARE = re.compile(r"^([A-Za-z][A-Za-z0-9_]{3,31})$")
 
 
-class UnknownChatRef(ValueError):
+class UnknownChatRef(TelegramPluginError, ValueError):
     def __init__(self, ref: str) -> None:
         super().__init__(f"Cannot read {ref!r} as a chat. Accepted forms: {ACCEPTED}.")
 

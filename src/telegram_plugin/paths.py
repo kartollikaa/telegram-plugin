@@ -7,19 +7,31 @@ from pathlib import Path
 from telegram_plugin.errors import UnsafePath
 
 
-def safe_output_path(
-    candidate: str | Path, *, root: Path, must_not_exist: bool = True
-) -> Path:
+def safe_output_path(candidate: str | Path, *, root: Path, must_not_exist: bool = True) -> Path:
+    resolved, root_resolved = _confine(candidate, root, allow_root=False)
+    if must_not_exist and resolved.exists():
+        raise UnsafePath(str(candidate), str(root_resolved))
+    return resolved
+
+
+def safe_output_dir(candidate: str | Path, *, root: Path) -> Path:
+    """Same confinement, but a directory may legitimately be the root itself."""
+    resolved, _ = _confine(candidate, root, allow_root=True)
+    return resolved
+
+
+def _confine(candidate: str | Path, root: Path, *, allow_root: bool) -> tuple[Path, Path]:
     root_resolved = Path(root).resolve()
     raw = Path(candidate)
     target = raw if raw.is_absolute() else root_resolved / raw
     resolved = _resolve_existing_ancestors(target)
-
-    if resolved == root_resolved or root_resolved not in resolved.parents:
+    if resolved == root_resolved:
+        if allow_root:
+            return resolved, root_resolved
         raise UnsafePath(str(candidate), str(root_resolved))
-    if must_not_exist and resolved.exists():
+    if root_resolved not in resolved.parents:
         raise UnsafePath(str(candidate), str(root_resolved))
-    return resolved
+    return resolved, root_resolved
 
 
 def _resolve_existing_ancestors(target: Path) -> Path:

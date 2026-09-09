@@ -43,3 +43,18 @@ def test_existing_file_is_allowed_when_overwrite_is_intended(tmp_path):
 def test_root_itself_is_not_a_valid_target(tmp_path):
     with pytest.raises(UnsafePath):
         safe_output_path(str(tmp_path), root=tmp_path)
+
+
+def test_output_dir_may_be_the_root_itself(tmp_path):
+    from telegram_plugin.paths import safe_output_dir
+
+    assert safe_output_dir(tmp_path, root=tmp_path) == tmp_path.resolve()
+
+
+def test_output_dir_outside_root_is_rejected(tmp_path):
+    import pytest
+
+    from telegram_plugin.paths import safe_output_dir
+
+    with pytest.raises(UnsafePath):
+        safe_output_dir("/etc", root=tmp_path)

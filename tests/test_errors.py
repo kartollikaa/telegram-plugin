@@ -56,3 +56,11 @@ def test_plugin_errors_share_a_base():
     for error in (NotAuthorized(), SessionLocked("/x"), UnsafePath("/a", "/b")):
         assert isinstance(error, TelegramPluginError)
 
+
+
+def test_unknown_chat_ref_reaches_the_model_without_a_class_prefix():
+    from telegram_plugin.refs import UnknownChatRef
+
+    message = describe(UnknownChatRef("nonsense"))
+    assert not message.startswith("UnknownChatRef")
+    assert "t.me" in message
