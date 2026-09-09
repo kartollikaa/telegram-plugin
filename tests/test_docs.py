@@ -52,3 +52,10 @@ def test_no_personal_data_in_documentation():
     for text in (README, ENV_EXAMPLE):
         assert "/Users/" not in text
         assert "dmitrijmaksimov" not in text
+
+
+def test_readme_warns_about_the_cold_first_run():
+    # Measured: the first dependency install can outlast a host's MCP startup
+    # timeout, so the first session shows no tools. The caveat must not vanish.
+    assert "scripts/setup.sh" in README
+    assert "may" in README and "no `telegram` tools" in README

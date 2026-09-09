@@ -52,11 +52,22 @@ Cursor. Only the Claude Code path and the plain `mcpServers` entry above have
 been exercised against a running host; if your host disagrees with its manifest,
 the absolute-path entry always works.
 
-There is no setup step. On its first run the launcher builds a virtualenv and
-installs its two dependencies, sending every byte of that noise to stderr so the
-MCP channel on stdout stays clean. The virtualenv lives in the state directory,
-never in the plugin directory — a plugin directory is replaced when the plugin
-updates. Run `scripts/setup.sh` if you would rather do it up front.
+On its first run the launcher builds a virtualenv and installs its two
+dependencies, sending every byte of that noise to stderr so the MCP channel on
+stdout stays clean. The virtualenv lives in the state directory, never in the
+plugin directory — a plugin directory is replaced when the plugin updates.
+
+**Do this once before the first session:**
+
+```bash
+./scripts/setup.sh
+```
+
+That first install takes up to a minute, which is longer than some hosts wait
+for an MCP server to announce itself. Skip it and your very first session may
+show no `telegram` tools at all — the install is still running. It is not broken:
+run `scripts/setup.sh`, or just start a second session once the install has
+finished.
 
 Requirements: Python 3.10 or newer, with `python3 -m venv` available (on
 Debian/Ubuntu that is the `python3-venv` package).

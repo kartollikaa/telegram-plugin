@@ -68,9 +68,13 @@ dependencies, then execs the server. Rules it follows:
    them fails. The venv is built as `venv.tmp` and renamed into place, so an
    interrupted first run cannot leave a half-installed environment behind.
 
-The effect is that the plugin works on a clean machine with no setup step, in
-any host, which is what makes it portable. `scripts/setup.sh` exists for people
-who would rather do it explicitly, and does the same thing.
+The effect is that the plugin works on a clean machine in any host, which is
+what makes it portable. It has one rough edge, measured rather than guessed: the
+first install takes up to a minute, and a host that waits less than that for a
+server to announce itself will show no tools in that first session. The install
+is unharmed and the next session is fine, but `scripts/setup.sh` — which does
+exactly what the first launch would — is the documented way to avoid meeting the
+problem at all.
 
 ## Configuration and state
 
