@@ -66,7 +66,10 @@ fi
 
 # Shapes that cannot be innocent: an API hash, a phone number, a bot token, a
 # generic secret key. Tracked files only, so .venv and downloads stay out.
-SHAPES='[0-9a-f]{32}|\+?\b[78][0-9]{10}\b|[0-9]{8,10}:[A-Za-z0-9_-]{35}|sk-[A-Za-z0-9]{20,}'
+# The digit boundary is spelled without \b on purpose: git grep's ERE engine does
+# not support it, so a \b here would silently match nothing in the tracked-file
+# sweep while still working in the history sweep, which uses system grep.
+SHAPES='[0-9a-f]{32}|(^|[^0-9])\+?[78][0-9]{10}([^0-9]|$)|[0-9]{8,10}:[A-Za-z0-9_-]{35}|sk-[A-Za-z0-9]{20,}'
 
 # Values named in .security-allowlist are known-innocent. The file itself is not
 # scanned: it exists to hold exactly the strings these patterns match.

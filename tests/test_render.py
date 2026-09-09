@@ -137,3 +137,21 @@ def test_non_ascii_names_survive_sanitising():
 
     assert safe_name("отчёт.pdf") == "отчёт.pdf"
     assert safe_name("報告.pdf") == "報告.pdf"
+
+
+def test_the_documented_thresholds_are_the_ones_in_the_code():
+    """The prose promises exact numbers; nothing else pins them to the constants."""
+    from pathlib import Path
+
+    from telegram_plugin.render import LABEL_LIMIT, MAX_ITEMS, TEXT_LIMIT
+
+    assert TEXT_LIMIT == 500
+    assert MAX_ITEMS == 200
+    assert LABEL_LIMIT == 80
+
+    repo = Path(__file__).resolve().parents[1]
+    for document in ("README.md", "docs/design.md", "skills/telegram/SKILL.md"):
+        text = (repo / document).read_text()
+        assert str(TEXT_LIMIT) in text, f"{document} must state the truncation threshold"
+    for document in ("README.md", "docs/design.md"):
+        assert str(MAX_ITEMS) in (repo / document).read_text()
