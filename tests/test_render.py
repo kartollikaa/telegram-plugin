@@ -5,13 +5,13 @@ from telegram_plugin.render import TEXT_LIMIT, envelope, render_message, truncat
 
 
 def _msg(**overrides):
-    base = dict(
-        id=7,
-        date=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
-        message="hello",
-        sender_id=11,
-        media=None,
-    )
+    base = {
+        "id": 7,
+        "date": datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+        "message": "hello",
+        "sender_id": 11,
+        "media": None,
+    }
     return SimpleNamespace(**{**base, **overrides})
 
 

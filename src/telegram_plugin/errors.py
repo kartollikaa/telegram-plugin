@@ -23,12 +23,35 @@ class SessionLocked(TelegramPluginError):
         )
 
 
+class MissingCredentials(TelegramPluginError):
+    def __init__(self) -> None:
+        super().__init__(
+            "TELEGRAM_API_ID and TELEGRAM_API_HASH are not set — get them from "
+            "https://my.telegram.org and put them in the state directory's .env "
+            "(see .env.example), or export them in the host's environment."
+        )
+
+
 class UnsafePath(TelegramPluginError):
     def __init__(self, candidate: str, root: str) -> None:
         super().__init__(
             f"Refusing to write to {candidate}: output must stay inside {root} and must not "
             "overwrite an existing file. Set TELEGRAM_OUTPUT_ROOT to widen the allowed area."
         )
+
+
+class NotAMember(TelegramPluginError):
+    def __init__(self, title: str) -> None:
+        super().__init__(
+            f"The invite for {title} is valid, but this account is not a member, so the history "
+            "cannot be read. This plugin never joins a chat on its own — join it in a Telegram "
+            "client first, then retry."
+        )
+
+
+class NoSuchMedia(TelegramPluginError):
+    def __init__(self, message_id: int) -> None:
+        super().__init__(f"Message {message_id} carries no downloadable media.")
 
 
 def describe(exc: BaseException) -> str:
@@ -47,5 +70,6 @@ def describe(exc: BaseException) -> str:
 def _text(exc: BaseException) -> str:
     try:
         return str(exc)
-    except Exception:
+    except Exception:  # noqa: BLE001
+        # describe() is the last line before the model; it must never raise on its own.
         return "unprintable error"
