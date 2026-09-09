@@ -1,0 +1,24 @@
+{
+  "name": "telegram",
+  "version": "0.1.0",
+  "description": "Read your own Telegram account: dialogs, history, search and attachments. Sending is off unless TELEGRAM_PLUGIN_ALLOW_SEND=1.",
+  "author": {
+    "name": "Dmitrii Maksimov",
+    "url": "https://github.com/kartollikaa"
+  },
+  "homepage": "https://github.com/kartollikaa/telegram-plugin",
+  "repository": "https://github.com/kartollikaa/telegram-plugin",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "mcp",
+    "telethon",
+    "messaging"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "telegram": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/telegram-mcp"
+    }
+  }
+}
