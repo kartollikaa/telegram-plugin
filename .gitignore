@@ -6,6 +6,7 @@
 *.session-journal
 *.session-wal
 *.session-shm
+*.session.lock
 
 # Anywhere a run might land output inside a checkout
 downloads/

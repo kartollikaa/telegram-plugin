@@ -90,7 +90,7 @@ if [ -n "$TREE_HITS" ]; then
 fi
 
 note "secret sweep — nothing secret is tracked at all"
-if git ls-files | grep -E '(^|/)\.env$|\.session(-journal|-wal|-shm)?$'; then
+if git ls-files | grep -E '(^|/)\.env$|\.session(-journal|-wal|-shm|\.lock)?$'; then
     echo "the files above must never be tracked" >&2
     fail secret-files-tracked
 fi
