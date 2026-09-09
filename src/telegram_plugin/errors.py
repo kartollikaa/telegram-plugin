@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 LOGIN_HINT = "Session is not authorised — run bin/telegram-login in a terminal, then retry."
 
 
@@ -35,8 +37,8 @@ class MissingCredentials(TelegramPluginError):
 class UnsafePath(TelegramPluginError):
     def __init__(self, candidate: str, root: str) -> None:
         super().__init__(
-            f"Refusing to write to {candidate}: output must stay inside {root} and must not "
-            "overwrite an existing file. Set TELEGRAM_OUTPUT_ROOT to widen the allowed area."
+            f"Refusing to write to {candidate}: output must stay inside the configured "
+            "output directory, must not contain '..', and must not overwrite an existing file."
         )
 
 
@@ -69,7 +71,14 @@ def describe(exc: BaseException) -> str:
 
 def _text(exc: BaseException) -> str:
     try:
-        return str(exc)
+        text = str(exc)
     except Exception:  # noqa: BLE001
         # describe() is the last line before the model; it must never raise on its own.
         return "unprintable error"
+    return _without_home(text)
+
+
+def _without_home(text: str) -> str:
+    """Third-party errors happily quote absolute paths; the model needs the path, not the user."""
+    home = str(Path.home())
+    return text.replace(home, "~") if home not in ("", "/") else text

@@ -27,3 +27,29 @@ def test_empty_rows(tmp_path):
     assert result["lines"] == 0
     assert result["first_id"] is None
     assert result["last_id"] is None
+
+
+def test_an_existing_file_is_never_clobbered(tmp_path):
+    import pytest
+
+    from telegram_plugin.errors import UnsafePath
+
+    target = tmp_path / "d.jsonl"
+    target.write_text("ORIGINAL")
+    with pytest.raises(UnsafePath):
+        write_jsonl(target, [{"id": 1}])
+    assert target.read_text() == "ORIGINAL"
+
+
+def test_a_symlink_at_the_target_is_never_followed(tmp_path):
+    import pytest
+
+    from telegram_plugin.errors import UnsafePath
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("ORIGINAL")
+    link = tmp_path / "link.jsonl"
+    link.symlink_to(outside)
+    with pytest.raises(UnsafePath):
+        write_jsonl(link, [{"id": 1}])
+    assert outside.read_text() == "ORIGINAL"

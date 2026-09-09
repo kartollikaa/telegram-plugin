@@ -47,10 +47,13 @@ claude plugin marketplace add <your-marketplace>
 claude plugin install telegram@<your-marketplace>
 ```
 
-`.codex-plugin/` and `.cursor-plugin/` carry the same manifest for Codex and
-Cursor. Only the Claude Code path and the plain `mcpServers` entry above have
-been exercised against a running host; if your host disagrees with its manifest,
-the absolute-path entry always works.
+`.codex-plugin/` and `.cursor-plugin/` hold manifests written from documentation
+and from the conventions other published plugins follow. **Neither has been run
+against a Codex or Cursor host**, and in particular the plugin-root variable each
+one interpolates is unverified — if it does not expand, the launcher path comes
+out wrong and the server simply never starts. Treat them as a starting point, not
+a supported path: the absolute-path `mcpServers` entry above works everywhere.
+Corrections from anyone who has actually run this on either host are welcome.
 
 On its first run the launcher builds a virtualenv and installs its two
 dependencies, sending every byte of that noise to stderr so the MCP channel on
@@ -63,8 +66,8 @@ plugin directory — a plugin directory is replaced when the plugin updates.
 ./scripts/setup.sh
 ```
 
-That first install takes up to a minute, which is longer than some hosts wait
-for an MCP server to announce itself. Skip it and your very first session may
+That first install takes longer than some hosts wait for an MCP server to
+announce itself. Skip it and your very first session may
 show no `telegram` tools at all — the install is still running. It is not broken:
 run `scripts/setup.sh`, or just start a second session once the install has
 finished.
@@ -105,6 +108,42 @@ rather than a traceback.
 The server takes an exclusive lock on the session file. If two hosts try to use
 one session at the same time, the second is told so instead of racing for the
 auth key.
+
+## What you are handing over
+
+Logging in creates a **full user session** on your account. That is not a bot
+token with a narrow scope — it is the authority a Telegram client has. While the
+server runs, an agent can read everything the account can read: private
+conversations, group history, channels you have joined, and the service messages
+Telegram itself sends you. If other services deliver their login codes to your
+Telegram, those are readable too.
+
+- **Chat content reaches your model provider.** Every message a tool returns
+  becomes text in a conversation with a model running on someone else's
+  computers, and most of it was written by people who never agreed to that. Read
+  what you would be willing to paste in by hand, and prefer `out_path`, which
+  writes to your disk instead of into the conversation.
+- **The session file is as sensitive as your password.** Anyone who copies it has
+  the account until you revoke it, with no password or second factor in their
+  way. `0700` on the directory and `0600` on the file protect it from other users
+  of the machine — not from a backup. Keep `TELEGRAM_STATE_DIR` out of iCloud
+  Drive, Dropbox, OneDrive, a synced Documents folder and any git repository, and
+  remember that a whole-disk backup takes it wherever it lives.
+- **Reading leaves no trace.** History read through this plugin is not marked
+  read, so nobody in those chats sees anything. That is convenient, and it is
+  also the reason not to set this up on somebody else's behalf.
+
+**To revoke it:** in any Telegram client open Settings → Devices (Privacy and
+Security → Active Sessions on some platforms), find the session and terminate it,
+then delete the `.session` file. Do that when you stop using the plugin, if the
+state directory is ever exposed, or whenever you are unsure — it costs nothing,
+and `bin/telegram-login` gives you a new session in a minute.
+
+Telegram's [API Terms of Service](https://core.telegram.org/api/terms) govern
+what you may do with this access, and Telegram can limit or suspend an account
+over activity that looks like automated bulk collection. This is your account and
+your risk: read your own chats, and do not point this at an account that is not
+yours.
 
 ## Tools
 
@@ -162,6 +201,20 @@ do damage on a misread instruction.
 
 The state directory is created `0700`, and `.env` and the session file `0600`.
 
+### Turning sending on
+
+`TELEGRAM_PLUGIN_ALLOW_SEND=1` is an escalation, not a convenience. Without it,
+the worst a confused or manipulated agent can do is read, and write files inside
+one directory. With it, an agent can send messages from your account, under your
+name, to anyone the account can reach — while deciding what to send partly from
+text other people wrote. Nothing can un-send a message.
+
+So set it for the one session that needs it rather than in your shell profile:
+
+```bash
+TELEGRAM_PLUGIN_ALLOW_SEND=1 claude
+```
+
 ## Development
 
 ```bash
@@ -170,16 +223,22 @@ python3 -m venv .venv && ./.venv/bin/python -m pip install -e ".[dev]"
 ./scripts/security-check.sh           # lint, SAST, dependency audit, secret sweep
 ```
 
+The test suite needs no network. The security script does: `pip-audit` queries a
+vulnerability database. It also wants `shellcheck` (`brew install shellcheck`,
+`apt-get install shellcheck`); without it that one check is skipped locally and
+enforced in CI.
+
 The MCP layer is intentionally thin; the parts worth testing are ordinary
 functions. See [docs/design.md](docs/design.md) for why each piece is shaped the
 way it is.
 
 ## A note on names
 
-This project is not published on PyPI. A package called `telegram-mcp` exists
-there and is unrelated to any of the well-known Telegram MCP servers — installing
-it would hand your API hash and session to a third party. Clone this repository
-instead.
+This project is not published on PyPI and has no package there. If you
+`pip install` something named after this repository, it is not this code — clone
+the repository instead. A package called `telegram-mcp` does exist on PyPI, by a
+different author; it is an unrelated tool solving the opposite problem (it lets
+an agent message *you*), not a copy or a fork of this one.
 
 ## License
 

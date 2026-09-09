@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from telegram_plugin.client import Batch
 from telegram_plugin.errors import NoSuchMedia, NotAuthorized
 from telegram_plugin.refs import ChatRef
 
@@ -53,22 +54,35 @@ class FakeGateway:
         self._check()
         return {"id": -1001, "title": "Alpha", "type": "channel", "username": "alpha"}
 
-    async def history(self, ref: ChatRef, **criteria) -> list[dict]:
+    async def history(self, ref: ChatRef, **criteria) -> Batch:
+        """Mirrors the real gateway's contract: `limit` bounds ACCEPTED rows."""
         self._check()
-        rows = self.rows
-        if criteria.get("media_only"):
-            rows = [r for r in rows if "media" in r]
-        min_id = criteria.get("min_id") or 0
-        rows = [r for r in rows if r["id"] > min_id]
+        candidates = [r for r in self.rows if r["id"] > (criteria.get("min_id") or 0)]
         max_id = criteria.get("max_id") or 0
         if max_id:
-            rows = [r for r in rows if r["id"] < max_id]
+            candidates = [r for r in candidates if r["id"] < max_id]
         limit = criteria.get("limit")
-        return rows[:limit] if limit else rows
+        accepted: list[dict] = []
+        scanned = 0
+        for row in candidates:
+            scanned += 1
+            if criteria.get("media_only") and "media" not in row:
+                continue
+            accepted.append(row)
+            if limit and len(accepted) >= limit:
+                break
+        return Batch(rows=accepted, scanned=scanned)
 
-    async def search(self, query: str, ref: ChatRef | None, limit: int) -> list[dict]:
+    async def search(self, query: str, ref: ChatRef | None, **criteria) -> Batch:
+        """Newest first, like Telegram's own search, then sorted ascending."""
         self._check()
-        return [r for r in self.rows if query in r["text"]][:limit]
+        matches = [r for r in self.rows if query in r["text"]]
+        max_id = criteria.get("max_id") or 0
+        if max_id:
+            matches = [r for r in matches if r["id"] < max_id]
+        limit = criteria.get("limit")
+        page = list(reversed(matches))[:limit] if limit else list(reversed(matches))
+        return Batch(rows=sorted(page, key=lambda r: r["id"]), scanned=len(page))
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:
         self._check()

@@ -52,17 +52,35 @@ def _describe_media(media: Any) -> dict | None:
 
 
 def envelope(
-    items: list[dict], *, total_seen: int, has_more: bool, next_cursor: int | None
+    items: list[dict],
+    *,
+    has_more: bool,
+    next_cursor: int | None,
+    cursor_field: str = "min_id",
+    scanned: int = 0,
+    scan_truncated: bool = False,
 ) -> dict:
-    omitted = max(total_seen - len(items), 0)
+    """`note` never fabricates a remaining count — we stop early and do not know it."""
     if has_more:
         note = (
-            f"{len(items)} returned, at least {omitted} more available — "
-            f"continue with min_id={next_cursor}, or pass out_path to write the whole range "
-            "to a JSONL file instead of into this conversation."
+            f"{len(items)} returned, more available — continue with "
+            f"{cursor_field}={next_cursor}, or pass out_path to write the whole range to a "
+            "JSONL file instead of into this conversation."
+        )
+    elif items:
+        note = f"{len(items)} returned; nothing left in this range."
+    elif scanned:
+        note = (
+            f"nothing matched, after scanning {scanned} messages in this range — "
+            "the range was not empty, the filters excluded everything in it."
         )
     else:
-        note = f"{len(items)} returned; nothing left in this range."
+        note = "nothing in this range."
+    if scan_truncated:
+        note += (
+            f" Scanning stopped at {scanned} messages to stay cheap; narrow the range with "
+            "min_id or max_id and ask again."
+        )
     return {
         "items": items,
         "returned": len(items),

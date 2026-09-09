@@ -5,6 +5,12 @@
 *.session
 *.session-journal
 
+# Anywhere a run might land output inside a checkout
+downloads/
+*.jsonl
+venv.tmp/
+.ruff_cache/
+
 # Python
 __pycache__/
 *.py[cod]

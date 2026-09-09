@@ -28,9 +28,12 @@ note "pip-audit — known vulnerabilities in the installed dependencies"
 note "shellcheck — the shell entry points"
 if command -v shellcheck >/dev/null 2>&1; then
     shellcheck bin/telegram-mcp bin/telegram-login scripts/*.sh || fail shellcheck
-else
-    echo "shellcheck is not installed; install it locally (CI always runs it)" >&2
+elif [ -n "${CI:-}" ]; then
+    echo "shellcheck is missing in CI, where it must always run" >&2
     fail shellcheck-missing
+else
+    echo "shellcheck is not installed, skipping it: brew install shellcheck," >&2
+    echo "or apt-get install shellcheck. CI runs it on every push regardless." >&2
 fi
 
 # Shapes that cannot be innocent: an API hash, a phone number, a bot token, a
@@ -38,7 +41,7 @@ fi
 SHAPES='[0-9a-f]{32}|\+?\b[78][0-9]{10}\b|[0-9]{8,10}:[A-Za-z0-9_-]{35}|sk-[A-Za-z0-9]{20,}'
 
 note "secret sweep — tracked files"
-if git ls-files -z | xargs -0 grep -InE "$SHAPES"; then
+if git grep -InE "$SHAPES" -- .; then
     echo "the lines above look like credentials" >&2
     fail secrets-in-tree
 fi
@@ -49,12 +52,15 @@ if git ls-files | grep -E '(^|/)\.env$|\.session(-journal)?$'; then
     fail secret-files-tracked
 fi
 
-# History is swept for shapes that stay recognisable in a diff. A bare hex string
-# is not among them: low-entropy hex appears legitimately in test fixtures, and a
-# real hash would also have to pass the working-tree sweep above.
+# History needs its own patterns. A bare hex string is too common in fixtures to
+# ban outright, but an *assignment* of one is not — and an added-then-removed
+# commit is exactly the case the working-tree sweep above cannot see.
+HISTORY_SHAPES='\+?\b[78][0-9]{10}\b|[0-9]{8,10}:[A-Za-z0-9_-]{35}|sk-[A-Za-z0-9]{20,}'
+HISTORY_SHAPES="$HISTORY_SHAPES"'|(api[_-]?hash|api[_-]?id|token|secret)[[:space:]]*[=:][[:space:]]*.?[0-9a-f]{32}'
+
 note "secret sweep — history"
-if git log -p --all | grep -qE '\+?\b[78][0-9]{10}\b|[0-9]{8,10}:[A-Za-z0-9_-]{35}|sk-[A-Za-z0-9]{20,}'; then
-    echo "history contains something phone- or token-shaped" >&2
+if git log -p --all | grep -qiE "$HISTORY_SHAPES"; then
+    echo "history contains an assigned credential, or something phone- or token-shaped" >&2
     fail secrets-in-history
 fi
 
@@ -69,7 +75,7 @@ if [ -n "${TELEGRAM_API_HASH:-}" ]; then
 fi
 
 note "personal data sweep — no absolute home paths"
-if git ls-files -z | xargs -0 grep -InE '/(Users|home)/[a-z]' ; then
+if git grep -InE '/(Users|home)/[a-z]' -- .; then
     echo "the lines above carry someone's home directory" >&2
     fail personal-paths
 fi

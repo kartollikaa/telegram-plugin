@@ -108,6 +108,7 @@ def build_server(config: Config, gateway: TelegramGateway) -> MCPServer:
         query: str,
         chat: str | None = None,
         limit: Limit = DEFAULT_ITEMS,
+        max_id: int | None = None,
         out_path: str | None = None,
         out_limit: ExportLimit = 1000,
     ) -> dict:
@@ -118,6 +119,7 @@ def build_server(config: Config, gateway: TelegramGateway) -> MCPServer:
                 query=query,
                 chat=chat,
                 limit=limit,
+                max_id=max_id,
                 out_path=out_path,
                 out_limit=out_limit,
             )
@@ -178,11 +180,11 @@ async def _read_messages(
 
     if out_path:
         target = safe_output_path(out_path, root=config.output_root)
-        rows = await gateway.history(ref, limit=out_limit, **criteria)
-        return write_jsonl(target, rows)
+        batch = await gateway.history(ref, limit=out_limit, **criteria)
+        return write_jsonl(target, batch.rows)
 
-    rows = await gateway.history(ref, limit=limit + 1, **criteria)
-    return _envelope_of(rows, limit)
+    batch = await gateway.history(ref, limit=limit + 1, **criteria)
+    return _forward_envelope(batch, limit)
 
 
 async def _search_messages(
@@ -192,14 +194,17 @@ async def _search_messages(
     query: str,
     chat: str | None,
     limit: int,
+    max_id: int | None,
     out_path: str | None,
     out_limit: int,
 ) -> dict:
     ref = parse_chat_ref(chat) if chat else None
     if out_path:
         target = safe_output_path(out_path, root=config.output_root)
-        return write_jsonl(target, await gateway.search(query, ref, out_limit))
-    return _envelope_of(await gateway.search(query, ref, limit + 1), limit)
+        batch = await gateway.search(query, ref, limit=out_limit, max_id=max_id)
+        return write_jsonl(target, batch.rows)
+    batch = await gateway.search(query, ref, limit=limit + 1, max_id=max_id)
+    return _backward_envelope(batch, limit)
 
 
 async def _download_media(
@@ -218,13 +223,34 @@ async def _send_message(gateway: TelegramGateway, chat: str, text: str) -> dict:
     return await gateway.send(parse_chat_ref(chat), text)
 
 
-def _envelope_of(rows: list[dict], limit: int) -> dict:
-    page = paginate([row["id"] for row in rows], limit)
+def _forward_envelope(batch, limit: int) -> dict:
+    """History reads forwards: keep the oldest of the page, continue on min_id."""
+    page = paginate([row["id"] for row in batch.rows], limit)
     return envelope(
-        rows[: len(page.items)],
-        total_seen=len(rows),
+        batch.rows[: len(page.items)],
         has_more=page.has_more,
         next_cursor=page.next_cursor,
+        cursor_field="min_id",
+        scanned=batch.scanned,
+        scan_truncated=batch.scan_truncated,
+    )
+
+
+def _backward_envelope(batch, limit: int) -> dict:
+    """Search reads backwards: keep the NEWEST of the page, continue on max_id.
+
+    Slicing from the front here would hand back the oldest matches and then point
+    the cursor forwards, leaving everything older unreachable.
+    """
+    rows = batch.rows
+    has_more = len(rows) > limit
+    items = rows[-limit:] if has_more else rows
+    return envelope(
+        items,
+        has_more=has_more,
+        next_cursor=items[0]["id"] if items and has_more else None,
+        cursor_field="max_id",
+        scanned=batch.scanned,
     )
 
 

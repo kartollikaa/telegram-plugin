@@ -25,10 +25,14 @@ def test_session_locked_explains_the_conflict():
     assert "Traceback" not in message
 
 
-def test_unsafe_path_is_reported_without_a_traceback():
+def test_unsafe_path_is_reported_without_disclosing_the_root():
+    # The refusal reaches a model that may be acting on injected instructions:
+    # it must not name the boundary's location, nor how to move it.
     message = describe(UnsafePath("/etc/passwd", "/state/downloads"))
     assert "Traceback" not in message
-    assert "/state/downloads" in message
+    assert "/state/downloads" not in message
+    assert "TELEGRAM_OUTPUT_ROOT" not in message
+    assert "/etc/passwd" in message
 
 
 def test_login_hint_is_one_actionable_line():

@@ -49,17 +49,37 @@ def test_truncate_returns_flag():
     assert truncate("abcdef", 3) == ("abc", True)
 
 
-def test_envelope_reports_what_was_omitted():
-    env = envelope([{"id": 1}], total_seen=210, has_more=True, next_cursor=1)
+def test_envelope_points_at_the_next_page_without_inventing_a_count():
+    env = envelope([{"id": 1}], has_more=True, next_cursor=1)
     assert env["returned"] == 1
     assert env["has_more"] is True
     assert env["next_cursor"] == 1
-    assert "209" in env["note"]
-    assert "min_id" in env["note"]
+    assert "min_id=1" in env["note"]
+    assert "out_path" in env["note"]
 
 
-def test_envelope_note_is_quiet_when_nothing_omitted():
-    env = envelope([{"id": 1}], total_seen=1, has_more=False, next_cursor=None)
+def test_envelope_can_point_backwards_for_search():
+    env = envelope([{"id": 9}], has_more=True, next_cursor=9, cursor_field="max_id")
+    assert "max_id=9" in env["note"]
+    assert "min_id" not in env["note"]
+
+
+def test_envelope_note_is_quiet_when_nothing_is_left():
+    env = envelope([{"id": 1}], has_more=False, next_cursor=None)
     assert env["has_more"] is False
     assert env["next_cursor"] is None
-    assert "more" not in env["note"].lower()
+    assert "more available" not in env["note"]
+
+
+def test_an_empty_result_distinguishes_a_filter_from_an_empty_range():
+    filtered = envelope([], has_more=False, next_cursor=None, scanned=420)
+    assert "420" in filtered["note"]
+    assert "filters excluded" in filtered["note"]
+    empty = envelope([], has_more=False, next_cursor=None, scanned=0)
+    assert "nothing in this range" in empty["note"]
+
+
+def test_a_truncated_scan_says_so():
+    env = envelope([], has_more=False, next_cursor=None, scanned=20000, scan_truncated=True)
+    assert "20000" in env["note"]
+    assert "narrow the range" in env["note"]

@@ -88,6 +88,30 @@ async def test_read_messages_returns_an_envelope_with_a_cursor():
     assert "min_id=4" in payload["note"]
 
 
+async def test_search_keeps_the_newest_matches_and_pages_backwards():
+    server = _server()
+    first = _payload(await server.call_tool("search_messages", {"query": "message", "limit": 3}))
+    assert [item["id"] for item in first["items"]] == [10, 11, 12]
+    assert first["next_cursor"] == 10
+    assert "max_id=10" in first["note"]
+    second = _payload(
+        await server.call_tool(
+            "search_messages", {"query": "message", "limit": 3, "max_id": first["next_cursor"]}
+        )
+    )
+    assert [item["id"] for item in second["items"]] == [7, 8, 9]
+    assert not {i["id"] for i in first["items"]} & {i["id"] for i in second["items"]}
+
+
+async def test_search_never_advertises_a_cursor_it_cannot_accept():
+    tools = {tool.name: tool for tool in await _server().list_tools()}
+    accepted = set(tools["search_messages"].input_schema["properties"])
+    result = _payload(await _server().call_tool("search_messages", {"query": "message", "limit": 3}))
+    named = [field for field in ("min_id", "max_id") if f"{field}=" in result["note"]]
+    assert named, "the note must name the cursor argument"
+    assert all(field in accepted for field in named)
+
+
 async def test_second_page_continues_from_the_cursor():
     server = _server()
     first = _payload(await server.call_tool("read_messages", {"chat": "@somechannel", "limit": 4}))

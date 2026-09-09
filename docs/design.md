@@ -70,8 +70,8 @@ dependencies, then execs the server. Rules it follows:
 
 The effect is that the plugin works on a clean machine in any host, which is
 what makes it portable. It has one rough edge, measured rather than guessed: the
-first install takes up to a minute, and a host that waits less than that for a
-server to announce itself will show no tools in that first session. The install
+first install takes long enough that a host which waits less for a server to
+announce itself will show no tools at all in that first session. The install
 is unharmed and the next session is fine, but `scripts/setup.sh` — which does
 exactly what the first launch would — is the documented way to avoid meeting the
 problem at all.
@@ -86,6 +86,7 @@ Nothing secret lives in the repository; only `.env.example` does.
 | `TELEGRAM_API_HASH` | from my.telegram.org | required |
 | `TELEGRAM_STATE_DIR` | session, `.env`, venv, downloads | `~/.local/state/telegram-plugin` |
 | `TELEGRAM_SESSION_NAME` | session file basename | `telegram` |
+| `TELEGRAM_OUTPUT_ROOT` | the only directory tools may write into | `$TELEGRAM_STATE_DIR/downloads` |
 | `TELEGRAM_PLUGIN_PYTHON` | interpreter override | unset |
 | `TELEGRAM_PLUGIN_ALLOW_SEND` | `1` registers `send_message` | unset |
 
@@ -127,10 +128,12 @@ hundred-odd tools now ship read-only switches to undo the damage.
 | `resolve_chat(ref)` | accepts `https://t.me/name`, `https://t.me/c/<id>/<msg>`, `https://t.me/+invite`, `@name`, a numeric id; returns id, type, title |
 | `read_messages(chat, limit=50, min_id?, max_id?, since?, until?, from_user?, media_only?, out_path?)` | messages in ascending id order |
 | `search_messages(query, chat?, limit=50, out_path?)` | text search, globally or in one chat |
-| `download_media(chat, message_id, dest_dir)` | one document to disk, returns the path |
+| `download_media(chat, message_id, dest_dir?)` | one document to disk, returns the path |
 | `send_message(chat, text)` | **registered only when `TELEGRAM_PLUGIN_ALLOW_SEND=1`** |
 
-Read tools are annotated `readOnlyHint`; `send_message` is annotated as neither
+The five looking tools are annotated `readOnlyHint`. `download_media` is not:
+it changes nothing in Telegram but it does create a local file, and saying
+otherwise would be a lie to the host. `send_message` is annotated as neither
 read-only nor idempotent.
 
 Each message carries: id, ISO date, sender id and display name, text, a link to
@@ -209,7 +212,7 @@ stderr — is the pattern this launcher copies.
 
 Among Telethon-based community servers, the field agrees on out-of-process login
 and a read-only mode, and disagrees on almost everything else, with tool counts
-from five to a hundred and eighty and pagination ceilings that are frequently
-absent. The choices above are the intersection of what those projects got right:
+ranging from a handful to well over a hundred and pagination ceilings that are
+frequently absent. The choices above are the intersection of what those projects got right:
 a small surface, real ceilings, a login that no tool can reach, and flood waits
 surfaced honestly.
