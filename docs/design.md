@@ -132,7 +132,20 @@ only paid at login. So holding the connection bought nothing:
 - a call that finds the session busy waits up to `TELEGRAM_LOCK_WAIT` seconds
   rather than refusing outright;
 - an in-flight call is never disconnected underneath itself — operations run
-  inside a reentrant guard that the idle watcher respects.
+  inside a reentrant guard that the idle watcher respects;
+- the watcher sleeps to the release deadline rather than polling for it, because
+  the deadline is known exactly and every wakeup is paid by every server on the
+  machine;
+- `close()` captures the client, the lock and the watcher before its first
+  `await`, and releases the lock **last** — a call arriving mid-close then blocks
+  on the lock until the close is finished instead of meeting a half-closed
+  gateway. A test pins that ordering;
+- the server closes the gateway through its own lifespan, so the client is
+  disconnected inside the loop that owns it rather than being killed with the
+  process;
+- only genuine contention counts as busy. A filesystem without locks or an
+  exhausted lock table is raised as itself, because reporting it as "held by
+  another process" sends the operator hunting a process that is not there.
 
 Resolved chats are cached for the life of a connection, which removes a round
 trip per call, and the cache dies with the client because entities belong to it.

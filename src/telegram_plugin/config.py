@@ -78,16 +78,22 @@ def load_config(env: Mapping[str, str], dotenv_text: str | None = None) -> Confi
         max_download_bytes=_as_int(value("TELEGRAM_MAX_DOWNLOAD_BYTES"))
         or DEFAULT_MAX_DOWNLOAD_BYTES,
         send_limit=_as_int(value("TELEGRAM_PLUGIN_SEND_LIMIT")) or DEFAULT_SEND_LIMIT,
-        idle_timeout=_as_float(value("TELEGRAM_IDLE_TIMEOUT"), DEFAULT_IDLE_TIMEOUT),
-        lock_wait=_as_float(value("TELEGRAM_LOCK_WAIT"), DEFAULT_LOCK_WAIT),
+        idle_timeout=_as_seconds(value("TELEGRAM_IDLE_TIMEOUT"), DEFAULT_IDLE_TIMEOUT),
+        lock_wait=_as_seconds(value("TELEGRAM_LOCK_WAIT"), DEFAULT_LOCK_WAIT),
     )
 
 
-def _as_float(raw: str | None, fallback: float) -> float:
+def _as_seconds(raw: str | None, fallback: float) -> float:
+    """Zero is a deliberate opt-out; a negative value is a typo, not an instruction.
+
+    Letting it through would silently restore the behaviour where one session holds
+    the account for its whole life.
+    """
     try:
-        return float(raw) if raw else fallback
+        seconds = float(raw) if raw else fallback
     except ValueError:
         return fallback
+    return seconds if seconds >= 0 else fallback
 
 
 def _as_int(raw: str | None) -> int | None:

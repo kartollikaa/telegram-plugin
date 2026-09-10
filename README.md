@@ -182,8 +182,8 @@ will want the same account. The server therefore **connects on demand and lets g
 after `TELEGRAM_IDLE_TIMEOUT` seconds of inactivity**, and a call that finds the
 session busy **waits up to `TELEGRAM_LOCK_WAIT` seconds** instead of failing. In
 practice: whoever asks first works immediately, the others pause a moment. Coming
-back costs about 280 ms, measured — the session file already holds the auth key,
-so reconnecting is not a fresh handshake.
+back is cheap — the session file already holds the auth key, so reconnecting is
+not a fresh handshake.
 
 If the wait runs out, the answer says which lock is held and what to do. The most
 common cause is a long-lived session in another window; it will let go by itself
