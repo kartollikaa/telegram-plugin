@@ -64,10 +64,45 @@ def render_message(
         "text_truncated": was_truncated,
         "link": message_link(chat_username, chat_internal_id, message.id),
     }
+    reply = _describe_reply(getattr(message, "reply_to", None), chat_username, chat_internal_id)
+    if reply:
+        rendered["reply_to"] = reply
     media = _describe_media(getattr(message, "media", None))
     if media:
         rendered["media"] = media
     return rendered
+
+
+def _describe_reply(header: Any, username: str | None, internal_id: int | None) -> dict | None:
+    """Which message this one answers, and which topic or comment thread it sits in.
+
+    A forum post that answers nothing still carries a header, with the topic id in
+    `reply_to_msg_id`. Read as an answer, it would thread a whole chat onto its topic roots.
+    """
+    if header is None:
+        return None
+    answered = getattr(header, "reply_to_msg_id", None)
+    thread = getattr(header, "reply_to_top_id", None)
+    if thread is None and getattr(header, "forum_topic", False):
+        answered, thread = None, answered
+    if answered is None and thread is None:
+        return None  # a reply to a story: there is no message to point at
+    return {
+        "message_id": answered,
+        "link": _reply_link(header, username, internal_id, answered) if answered else None,
+        "thread_id": thread,
+    }
+
+
+def _reply_link(
+    header: Any, username: str | None, internal_id: int | None, message_id: int
+) -> str | None:
+    """A reply can point into another chat, where this chat's link would name a stranger."""
+    peer = getattr(header, "reply_to_peer_id", None)
+    if peer is None:
+        return message_link(username, internal_id, message_id)
+    channel_id = getattr(peer, "channel_id", None)
+    return message_link(None, channel_id, message_id) if channel_id else None
 
 
 def _describe_media(media: Any) -> dict | None:

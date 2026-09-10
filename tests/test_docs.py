@@ -131,6 +131,6 @@ def test_the_design_document_describes_every_skill_that_ships():
 
 def test_the_readme_explains_the_one_account_several_sessions_reality():
     assert "One account, several sessions" in README
-    assert "280 ms" in README_FLAT, "the number that justifies releasing the lock"
+    assert "reconnecting is not a fresh handshake" in README_FLAT
     for variable in ("TELEGRAM_IDLE_TIMEOUT", "TELEGRAM_LOCK_WAIT"):
         assert variable in README, variable

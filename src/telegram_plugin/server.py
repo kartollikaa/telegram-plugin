@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
@@ -78,8 +79,33 @@ def _installed_version() -> str:
         return _UNKNOWN_VERSION
 
 
+def closing_lifespan(gateway: TelegramGateway):
+    """Hands the gateway back on shutdown, inside the server's own event loop.
+
+    Without it the process exits with a connected client and a pending idle
+    watcher: the session database loses whatever it had not committed, and the
+    dangling task prints on stderr, which is where an MCP server's diagnostics go.
+    """
+
+    @asynccontextmanager
+    async def lifespan(_server: MCPServer) -> AsyncIterator[None]:
+        try:
+            yield None
+        finally:
+            close = getattr(gateway, "close", None)
+            if close is not None:
+                await close()
+
+    return lifespan
+
+
 def build_server(config: Config, gateway: TelegramGateway) -> MCPServer:
-    server = MCPServer(name="telegram", version=package_version(), instructions=INSTRUCTIONS)
+    server = MCPServer(
+        name="telegram",
+        version=package_version(),
+        instructions=INSTRUCTIONS,
+        lifespan=closing_lifespan(gateway),
+    )
 
     @server.tool(description="Which Telegram account this session belongs to.", annotations=_LOOKING)
     async def whoami() -> dict:

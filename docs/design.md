@@ -138,7 +138,20 @@ only paid at login. So holding the connection bought nothing:
 - a call that finds the session busy waits up to `TELEGRAM_LOCK_WAIT` seconds
   rather than refusing outright;
 - an in-flight call is never disconnected underneath itself — operations run
-  inside a reentrant guard that the idle watcher respects.
+  inside a reentrant guard that the idle watcher respects;
+- the watcher sleeps to the release deadline rather than polling for it, because
+  the deadline is known exactly and every wakeup is paid by every server on the
+  machine;
+- `close()` captures the client, the lock and the watcher before its first
+  `await`, and releases the lock **last** — a call arriving mid-close then blocks
+  on the lock until the close is finished instead of meeting a half-closed
+  gateway. A test pins that ordering;
+- the server closes the gateway through its own lifespan, so the client is
+  disconnected inside the loop that owns it rather than being killed with the
+  process;
+- only genuine contention counts as busy. A filesystem without locks or an
+  exhausted lock table is raised as itself, because reporting it as "held by
+  another process" sends the operator hunting a process that is not there.
 
 Resolved chats are cached for the life of a connection, which removes a round
 trip per call, and the cache dies with the client because entities belong to it.
@@ -192,9 +205,19 @@ otherwise would be a lie to the host. `send_message` is annotated as neither
 read-only nor idempotent.
 
 Each message carries: id, ISO date, sender id and display name, text, a link to
-the message, and for media the type, file name and size — never the bytes.
-Bytes come only from `download_media`, one file at a time, to a path the caller
-chose.
+the message, for a reply the message it answers, and for media the type, file
+name and size — never the bytes. Bytes come only from `download_media`, one file
+at a time, to a path the caller chose.
+
+`reply_to` is what makes an answer readable at all: "declined", "done", "+1"
+mean nothing without the message they answer, and pairing them by order is
+guessing. It reports `message_id`, a link, and `thread_id` — the forum topic or
+comment thread. Telegram's header is not a reply pointer by itself, and reading
+it as one produces a plausible, wrong graph: in a forum *every* message carries
+the header, and `reply_to_msg_id` is the topic root until `reply_to_top_id`
+appears alongside it, so a whole chat would thread onto its topics. Replies
+across chats set `reply_to_peer_id`, where this chat's link form would name a
+stranger's message — the link points at the other chat, or is omitted.
 
 ## Output hygiene
 

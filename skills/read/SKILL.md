@@ -28,6 +28,20 @@ Attachments follow the same path: `read_messages` with `media_only=true` shows
 what exists, then `download_media` fetches one file at a time and returns its
 path. Media is never carried inline; only its type, file name and size are.
 
+## Replies
+
+An answer read on its own is not evidence. "Declined", "done", "+1" and every
+other verdict means whatever it was replying to, so use `reply_to` — the id of
+the message it answers, a link to it, and `thread_id` for the forum topic or
+comment thread it sits in. Never map answers onto questions by their order:
+messages arrive interleaved, and a plausible pairing is still a guess. If the
+replies do not carry the mapping, say so instead of inventing one.
+
+Two shapes to expect. The message being answered is often outside the page you
+read; fetch it by id with `min_id`/`max_id` rather than widening the read. And
+in a forum every message carries a reply header — a post that answers nothing
+comes back with a `thread_id` and a null `message_id`, which is not a reply.
+
 ## Keeping results small
 
 The tools are capped, and the caps are not negotiable — `limit` above 200 is
