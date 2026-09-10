@@ -62,7 +62,10 @@ dependencies, then execs the server. Rules it follows:
    replaced when the plugin updates, so it cannot hold anything durable. The
    venv goes to `$TELEGRAM_STATE_DIR/venv`.
 3. **Interpreter precedence:** `$TELEGRAM_PLUGIN_PYTHON`, then the state venv,
-   then a venv built on the spot from `python3`.
+   then a venv built on the spot from `python3`. Keeping the venv in the state
+   directory couples the two: a second `TELEGRAM_STATE_DIR` gets a second
+   dependency install. That is the honest cost of never writing into the plugin
+   directory, and `TELEGRAM_PLUGIN_PYTHON` is the way out for anyone who minds.
 4. **Reinstall on drift, and verify by behaviour.** A sentinel holds a hash of
    the dependency list *and the plugin version*, so an update re-resolves rather
    than pinning a machine to whatever it first installed. Dependencies are
@@ -117,11 +120,29 @@ second server process is already holding it — two hosts running the plugin
 side by side — the tools fail with an explanation instead of racing for the auth
 key.
 
-`bin/telegram-login` is a separate program: it asks for the phone number, the
-code Telegram sends, and a 2FA password if the account has one, then writes the
-session and exits. It is interactive on purpose, and it is never reachable
-through a tool call. Secrets are read from a prompt, never from a command-line
-argument, where they would land in shell history and in the process table.
+`bin/telegram-login` is a separate program with three ways in, none of which
+lets a secret through a tool call:
+
+- `--status` reports whether the session is usable and under whom, and changes
+  nothing. Asked while the server holds the session, it says so instead of
+  failing — a held lock is itself the answer that a session exists.
+- `--qr` publishes a `tg://login` link, waits for a client already signed in to
+  confirm it, and writes the session. Nothing is typed, which is what lets the
+  bundled `/telegram:login` skill drive a login to completion without asking
+  anyone to run a script. The link and the outcome go to `auth-status.json` in
+  the state directory (mode `0600`) **before** the wait begins, because
+  Telethon's `wait()` only resolves while it is running — whoever is driving
+  needs the link in hand while the process sits there. An unconfirmed token is
+  re-requested only once it has actually expired; re-issuing a live one costs an
+  API call on a login endpoint for nothing.
+- no flags: the classic phone, code and 2FA prompts, for a human at a terminal.
+  This is the fallback the QR path names when an account has a second factor,
+  which a link alone cannot satisfy.
+
+Secrets are read from a prompt, never from a command-line argument, where they
+would land in shell history and in the process table. The lock is taken before
+the credentials are even looked at: if another client owns the session, nothing
+else about this invocation matters.
 
 Every tool checks authorisation first and, when there is none, returns a short
 instruction naming the command to run. No traceback.
@@ -253,6 +274,15 @@ testing are ordinary functions:
 
 Telethon itself is not mocked wholesale — the live path is verified by hand once,
 against a real account.
+
+One lesson is baked into the tests rather than left to discipline: a test double
+that diverges from the real contract hides exactly the bug it was written to
+catch. It happened twice here — a double that filtered server-side hid a filter
+applied to the wrong page, and a synchronous stub for `QRLogin.recreate` hid a
+missing `await`, so every retry waited on a dead token. Both were found by
+running against the real thing. There is now a test that asserts the double and
+Telethon agree on which calls are coroutines, and it fails if the double drifts
+back.
 
 ## Prior art
 

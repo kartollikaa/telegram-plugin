@@ -2,6 +2,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 README = (REPO / "README.md").read_text()
+# Prose wraps; matching phrases against the raw text makes tests fail on a reflow.
+README_FLAT = " ".join(README.split())
 ENV_EXAMPLE = (REPO / ".env.example").read_text()
 
 
@@ -82,3 +84,27 @@ def test_readme_warns_about_the_cold_first_run():
     # timeout, so the first session shows no tools. The caveat must not vanish.
     assert "scripts/setup.sh" in README
     assert "may" in README and "no `telegram` tools" in README
+
+
+def test_the_readme_leads_with_the_command_not_the_script():
+    assert "/telegram:login" in README
+    index_command = README.index("/telegram:login")
+    index_manual = README.index("The same thing by hand")
+    assert index_command < index_manual, "the command must come before the manual path"
+    for flag in ("--status", "--qr"):
+        assert flag in README, flag
+
+
+def test_the_readme_explains_the_two_factor_handoff():
+    assert "needs_password" in README_FLAT
+    assert "must not travel through a tool call" in README_FLAT
+
+
+def test_every_manifest_agrees_with_the_package_version():
+    import json
+    import re
+
+    version = re.search(r'^version = "(.*)"$', (REPO / "pyproject.toml").read_text(), re.MULTILINE)[1]
+    for directory in (".claude-plugin", ".codex-plugin", ".cursor-plugin"):
+        manifest = json.loads((REPO / directory / "plugin.json").read_text())
+        assert manifest["version"] == version, directory
