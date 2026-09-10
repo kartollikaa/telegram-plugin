@@ -169,9 +169,19 @@ otherwise would be a lie to the host. `send_message` is annotated as neither
 read-only nor idempotent.
 
 Each message carries: id, ISO date, sender id and display name, text, a link to
-the message, and for media the type, file name and size — never the bytes.
-Bytes come only from `download_media`, one file at a time, to a path the caller
-chose.
+the message, for a reply the message it answers, and for media the type, file
+name and size — never the bytes. Bytes come only from `download_media`, one file
+at a time, to a path the caller chose.
+
+`reply_to` is what makes an answer readable at all: "declined", "done", "+1"
+mean nothing without the message they answer, and pairing them by order is
+guessing. It reports `message_id`, a link, and `thread_id` — the forum topic or
+comment thread. Telegram's header is not a reply pointer by itself, and reading
+it as one produces a plausible, wrong graph: in a forum *every* message carries
+the header, and `reply_to_msg_id` is the topic root until `reply_to_top_id`
+appears alongside it, so a whole chat would thread onto its topics. Replies
+across chats set `reply_to_peer_id`, where this chat's link form would name a
+stranger's message — the link points at the other chat, or is omitted.
 
 ## Output hygiene
 

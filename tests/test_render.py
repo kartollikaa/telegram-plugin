@@ -1,6 +1,14 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+# The real headers, not a stand-in: the field names are the whole contract here.
+from telethon.tl.types import (
+    MessageReplyHeader,
+    MessageReplyStoryHeader,
+    PeerChannel,
+    PeerUser,
+)
+
 from telegram_plugin.render import TEXT_LIMIT, envelope, render_message, truncate
 
 
@@ -42,6 +50,57 @@ def test_media_is_described_but_never_carried():
 
 def test_message_without_media_has_no_media_key():
     assert "media" not in render_message(_msg())
+
+
+def test_a_reply_names_the_message_it_answers():
+    rendered = render_message(
+        _msg(reply_to=MessageReplyHeader(reply_to_msg_id=3)), chat_username="somechannel"
+    )
+    assert rendered["reply_to"] == {
+        "message_id": 3,
+        "link": "https://t.me/somechannel/3",
+        "thread_id": None,
+    }
+
+
+def test_a_message_that_answers_nothing_has_no_reply_key():
+    assert "reply_to" not in render_message(_msg())
+
+
+def test_a_forum_post_is_not_a_reply_to_its_own_topic():
+    """Every message in a forum carries a header; only some of them answer anything."""
+    header = MessageReplyHeader(reply_to_msg_id=12, forum_topic=True)
+    reply = render_message(_msg(reply_to=header), chat_username="somechannel")["reply_to"]
+    assert reply["message_id"] is None
+    assert reply["thread_id"] == 12
+    assert reply["link"] is None
+
+
+def test_a_reply_inside_a_forum_topic_keeps_both_ids():
+    header = MessageReplyHeader(reply_to_msg_id=30, reply_to_top_id=12, forum_topic=True)
+    reply = render_message(_msg(reply_to=header), chat_username="somechannel")["reply_to"]
+    assert reply["message_id"] == 30
+    assert reply["thread_id"] == 12
+    assert reply["link"] == "https://t.me/somechannel/30"
+
+
+def test_a_reply_into_another_chat_links_there_and_not_here():
+    header = MessageReplyHeader(reply_to_msg_id=3, reply_to_peer_id=PeerChannel(channel_id=777))
+    reply = render_message(_msg(reply_to=header), chat_username="somechannel")["reply_to"]
+    assert reply["message_id"] == 3
+    assert reply["link"] == "https://t.me/c/777/3"
+
+
+def test_a_reply_into_a_chat_without_a_link_form_gets_none_rather_than_a_wrong_link():
+    header = MessageReplyHeader(reply_to_msg_id=3, reply_to_peer_id=PeerUser(user_id=555))
+    reply = render_message(_msg(reply_to=header), chat_username="somechannel")["reply_to"]
+    assert reply["message_id"] == 3
+    assert reply["link"] is None
+
+
+def test_a_reply_to_a_story_reports_no_message():
+    header = MessageReplyStoryHeader(peer=PeerUser(user_id=5), story_id=9)
+    assert "reply_to" not in render_message(_msg(reply_to=header))
 
 
 def test_truncate_returns_flag():
