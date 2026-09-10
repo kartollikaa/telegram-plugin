@@ -108,7 +108,10 @@ def test_every_manifest_agrees_with_the_package_version():
     import json
     import re
 
-    version = re.search(r'^version = "(.*)"$', (REPO / "pyproject.toml").read_text(), re.MULTILINE)[1]
+    text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    found = re.search(r'^version = "(.*)"$', text, re.MULTILINE)
+    assert found, "pyproject.toml declares no version"
+    version = found[1]
     for directory in (".claude-plugin", ".codex-plugin", ".cursor-plugin"):
         manifest = json.loads((REPO / directory / "plugin.json").read_text())
         assert manifest["version"] == version, directory

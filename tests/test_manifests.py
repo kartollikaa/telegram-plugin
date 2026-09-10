@@ -13,7 +13,10 @@ def _manifest(directory):
 
 
 def _pyproject_version():
-    return re.search(r'^version = "(.+)"$', (REPO / "pyproject.toml").read_text(), re.MULTILINE)[1]
+    text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    found = re.search(r'^version = "(.+)"$', text, re.MULTILINE)
+    assert found, "pyproject.toml declares no version for these tests to compare against"
+    return found[1]
 
 
 @pytest.mark.parametrize("directory", MANIFESTS)
@@ -53,15 +56,37 @@ def test_the_announced_version_ignores_stale_installed_metadata(monkeypatch):
     assert server.package_version() == _pyproject_version()
 
 
-def test_the_announced_version_falls_back_to_metadata_outside_a_source_tree(monkeypatch):
+def test_a_foreign_pyproject_is_not_trusted_for_the_version(monkeypatch, tmp_path):
     from telegram_plugin import server
 
-    monkeypatch.setattr(server, "_version_from_source_tree", lambda: None)
+    foreign = tmp_path / "pyproject.toml"
+    foreign.write_text('[project]\nname = "something-else"\nversion = "9.9.9"\n', encoding="utf-8")
+    monkeypatch.setattr(server, "_PYPROJECT", foreign)
     monkeypatch.setattr(server.metadata, "version", lambda name: "1.2.3")
     assert server.package_version() == "1.2.3"
 
 
-def test_an_unidentifiable_install_announces_a_version_instead_of_crashing(monkeypatch):
+def test_an_unreadable_pyproject_falls_back_to_metadata_instead_of_raising(monkeypatch, tmp_path):
+    from telegram_plugin import server
+
+    monkeypatch.setattr(server, "_PYPROJECT", tmp_path / "gone" / "pyproject.toml")
+    monkeypatch.setattr(server.metadata, "version", lambda name: "1.2.3")
+    assert server.package_version() == "1.2.3"
+
+
+def test_a_pyproject_that_is_not_utf8_falls_back_instead_of_raising(monkeypatch, tmp_path):
+    from telegram_plugin import server
+
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_bytes(
+        b'[project]\nname = "telegram-plugin"\nversion = "5.5.5"\ndescription = "\xff\xfe"\n'
+    )
+    monkeypatch.setattr(server, "_PYPROJECT", pyproject)
+    monkeypatch.setattr(server.metadata, "version", lambda name: "1.2.3")
+    assert server.package_version() == "1.2.3"
+
+
+def test_an_unidentifiable_install_announces_a_version_instead_of_crashing(monkeypatch, tmp_path):
     from importlib import metadata
 
     from telegram_plugin import server
@@ -69,9 +94,49 @@ def test_an_unidentifiable_install_announces_a_version_instead_of_crashing(monke
     def absent(name):
         raise metadata.PackageNotFoundError(name)
 
-    monkeypatch.setattr(server, "_version_from_source_tree", lambda: None)
+    monkeypatch.setattr(server, "_PYPROJECT", tmp_path / "gone" / "pyproject.toml")
     monkeypatch.setattr(server.metadata, "version", absent)
     assert server.package_version() == "0+unknown"
+
+
+def test_the_version_survives_a_non_utf8_locale(tmp_path):
+    # Read in the locale's encoding instead of UTF-8, this raises UnicodeDecodeError —
+    # not an OSError — on the first non-ASCII byte, killing the server at startup.
+    import os
+    import subprocess
+    import sys
+
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "telegram-plugin"\ndescription = "длинное тире — вот"\nversion = "7.7.7"\n',
+        encoding="utf-8",
+    )
+    probe = (
+        "import locale, pathlib, sys\n"
+        "from telegram_plugin import server\n"
+        "server._PYPROJECT = pathlib.Path(sys.argv[1])\n"
+        "print(locale.getpreferredencoding(False))\n"
+        "print(server.package_version())\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(pyproject)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "LC_ALL": "C",
+            "LANG": "C",
+            "PYTHONCOERCECLOCALE": "0",
+            "PYTHONUTF8": "0",
+            "PYTHONPATH": str(REPO / "src"),
+        },
+    )
+    printed = result.stdout.split()
+    if printed and printed[0].lower().replace("-", "") == "utf8":
+        pytest.skip(f"this interpreter stayed on UTF-8 under LC_ALL=C ({printed[0]})")
+    assert result.returncode == 0, result.stderr
+    assert printed[1] == "7.7.7"
 
 
 def test_the_launcher_they_point_at_exists_and_is_executable():
