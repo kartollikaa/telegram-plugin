@@ -115,10 +115,27 @@ another application's session file: Telegram revokes an auth key that is used
 from two clients at once, which would break both the plugin and whatever it was
 copied from.
 
-For the same reason the server takes an advisory lock on the session file. If a
-second server process is already holding it — two hosts running the plugin
-side by side — the tools fail with an explanation instead of racing for the auth
-key.
+For the same reason the server takes an advisory lock on the session file. The
+first version held that lock for the life of the process, and that turned out to
+be the plugin's worst defect in practice: installed at user scope, it starts one
+server per agent session, so the first session to touch Telegram owned the
+account until it died and every other session was permanently answered "held by
+another process". Measured on a live account: three servers up, one holding the
+lock for twenty-two minutes, two useless.
+
+The fix rests on a measurement. Reconnecting with the auth key already in the
+session file costs **≈280 ms** — a full first handshake costs 1.6 s, but that is
+only paid at login. So holding the connection bought nothing:
+
+- the client connects on demand and is dropped after `TELEGRAM_IDLE_TIMEOUT`
+  seconds without a call, releasing the lock with it;
+- a call that finds the session busy waits up to `TELEGRAM_LOCK_WAIT` seconds
+  rather than refusing outright;
+- an in-flight call is never disconnected underneath itself — operations run
+  inside a reentrant guard that the idle watcher respects.
+
+Resolved chats are cached for the life of a connection, which removes a round
+trip per call, and the cache dies with the client because entities belong to it.
 
 `bin/telegram-login` is a separate program with three ways in, none of which
 lets a secret through a tool call:
