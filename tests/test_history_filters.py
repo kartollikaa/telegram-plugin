@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from telethon.tl.types import MessageReplyHeader
 
 from telegram_plugin.client import TelethonGateway
 from telegram_plugin.config import load_config
@@ -32,6 +33,7 @@ def _message(index: int):
         if index % 200 == 0
         else None,
         sender=None,
+        reply_to=None,
     )
 
 
@@ -119,6 +121,19 @@ async def test_a_filter_that_matches_nothing_reports_the_scan(gateway):
     batch = await instance.history(REF, limit=50, since=cutoff)
     assert batch.rows == []
     assert batch.scanned > 0, "an empty result must be distinguishable from an empty range"
+
+
+async def test_a_reply_reaches_the_row_the_gateway_returns(gateway):
+    """Rendering is unit-tested; this pins that the gateway hands it the header at all."""
+    instance, client = gateway
+    client.all[5].reply_to = MessageReplyHeader(reply_to_msg_id=3)
+    rows = {row["id"]: row for row in (await instance.history(REF, limit=10)).rows}
+    assert rows[6]["reply_to"] == {
+        "message_id": 3,
+        "link": "https://t.me/somechannel/3",
+        "thread_id": None,
+    }
+    assert "reply_to" not in rows[7]
 
 
 async def test_the_scan_is_bounded(gateway):
