@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegram-plugin"
+version = "0.1.0"
+description = "MCP server exposing one personal Telegram account for reading, searching and downloading"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Dmitrii Maksimov" }]
+keywords = ["telegram", "mcp", "telethon", "plugin"]
+dependencies = ["telethon>=1.42,<2", "mcp>=2,<3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "bandit>=1.7", "pip-audit>=2.7", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/kartollikaa/telegram-plugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+asyncio_mode = "auto"
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]

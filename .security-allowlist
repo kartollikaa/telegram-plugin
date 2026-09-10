@@ -1,0 +1,7 @@
+# Strings that look like credentials to scripts/security-check.sh but are not.
+# One per line, exact match, case-insensitive. Keep this file short: every entry
+# is a hole in the history sweep, so add one only for a value you can explain.
+#
+# Test fixture standing in for an API hash, introduced and removed while building
+# the plugin. Never a real credential.
+deadbeefdeadbeefdeadbeefdeadbeef

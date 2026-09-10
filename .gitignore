@@ -4,6 +4,15 @@
 !.env.example
 *.session
 *.session-journal
+*.session-wal
+*.session-shm
+*.session.lock
+
+# Anywhere a run might land output inside a checkout
+downloads/
+*.jsonl
+venv.tmp/
+.ruff_cache/
 
 # Python
 __pycache__/

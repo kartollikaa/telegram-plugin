@@ -1,0 +1,20 @@
+#!/bin/sh
+# Interactive login. Talks to a human, so stdout stays as it is.
+set -e
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
+VENV="$STATE/venv"
+
+if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
+    PYTHON=$TELEGRAM_PLUGIN_PYTHON
+elif [ -x "$VENV/bin/python" ]; then
+    PYTHON="$VENV/bin/python"
+else
+    echo "Dependencies are not installed yet. Run scripts/setup.sh first," >&2
+    echo "or start the plugin once so it can install them." >&2
+    exit 1
+fi
+
+PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec "$PYTHON" -m telegram_plugin.login "$@"
