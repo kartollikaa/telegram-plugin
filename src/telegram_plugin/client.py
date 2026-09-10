@@ -7,10 +7,12 @@ request, never the importing one.
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import os
+import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -97,52 +99,137 @@ def _inside(path: Path, parent: Path) -> bool:
         return False
 
 
-@contextmanager
-def session_lock(path: str | Path) -> Iterator[None]:
-    """Exclusive, non-blocking. Two clients on one auth key make Telegram revoke it."""
+class SessionLockHandle:
+    """An acquired session lock. Release it and another client may have the account."""
+
+    def __init__(self, descriptor: int) -> None:
+        self._descriptor: int | None = descriptor
+
+    def release(self) -> None:
+        if self._descriptor is None:
+            return
+        try:
+            fcntl.flock(self._descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(self._descriptor)
+            self._descriptor = None
+
+
+def _try_session_lock(path: str | Path) -> SessionLockHandle | None:
     lock_path = Path(f"{path}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     os.chmod(lock_path, 0o600)
     try:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise SessionLocked(str(path)) from exc
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(descriptor)
+        return None
+    return SessionLockHandle(descriptor)
+
+
+async def acquire_session_lock(path: str | Path, timeout: float = 0.0) -> SessionLockHandle:
+    """Wait for the account rather than refusing it outright.
+
+    One server per session means a second session used to be told "held by another
+    process" for as long as the first lived. Waiting turns that into a pause.
+    """
+    deadline = time.monotonic() + max(timeout, 0.0)
+    while True:
+        handle = _try_session_lock(path)
+        if handle is not None:
+            return handle
+        if time.monotonic() >= deadline:
+            raise SessionLocked(str(path))
+        await asyncio.sleep(min(0.1, max(deadline - time.monotonic(), 0.01)))
+
+
+@contextmanager
+def session_lock(path: str | Path, timeout: float = 0.0) -> Iterator[None]:
+    """The synchronous form, for the login CLI. Two clients on one auth key make
+    Telegram revoke it."""
+    deadline = time.monotonic() + max(timeout, 0.0)
+    while True:
+        handle = _try_session_lock(path)
+        if handle is not None:
+            break
+        if time.monotonic() >= deadline:
+            raise SessionLocked(str(path))
+        time.sleep(min(0.1, max(deadline - time.monotonic(), 0.01)))
+    try:
+        yield
     finally:
-        os.close(handle)
+        handle.release()
 
 
 class TelethonGateway:
     def __init__(self, config: Config) -> None:
         self._config = config
         self._client: TelegramClient | None = None
-        self._lock: Any = None
+        self._lock: SessionLockHandle | None = None
+        self._entities: dict[tuple[str, Any], Any] = {}
+        self._gate = asyncio.Lock()
+        self._in_flight = 0
+        self._last_used = 0.0
+        self._idle_watcher: asyncio.Task | None = None
+
+    @asynccontextmanager
+    async def _session(self) -> Any:
+        """Every operation runs inside this: it keeps the idle watcher honest.
+
+        Reentrant by counting, because some operations resolve a chat first.
+        """
+        client = await self._connected()
+        self._in_flight += 1
+        try:
+            yield client
+        finally:
+            self._in_flight -= 1
+            self._last_used = time.monotonic()
 
     async def _connected(self) -> TelegramClient:
-        if self._client is not None:
-            return self._client
-        config = self._config
-        if not config.api_id or not config.api_hash:
-            raise MissingCredentials()
-        if not config.session_path.exists():
-            raise NotAuthorized()
+        async with self._gate:
+            self._last_used = time.monotonic()
+            if self._client is not None:
+                return self._client
+            config = self._config
+            if not config.api_id or not config.api_hash:
+                raise MissingCredentials()
+            if not config.session_path.exists():
+                raise NotAuthorized()
 
-        self._lock = session_lock(config.session_path)
-        self._lock.__enter__()
-        try:
-            client = await self._open_client()
-        except BaseException:
-            # Without this the lock outlives the failure, and every later call in
-            # this process is told the session is held "by another process".
-            self._release_lock()
-            raise
-        self._client = client
-        return client
+            self._lock = await acquire_session_lock(config.session_path, config.lock_wait)
+            try:
+                client = await self._open_client()
+            except BaseException:
+                # Without this the lock outlives the failure, and every later call
+                # in this process is told the session is held "by another process".
+                self._release_lock()
+                raise
+            self._client = client
+            self._entities.clear()
+            self._start_idle_watch()
+            return client
+
+    def _start_idle_watch(self) -> None:
+        if self._config.idle_timeout <= 0:
+            return
+        if self._idle_watcher is not None and not self._idle_watcher.done():
+            return
+        self._idle_watcher = asyncio.create_task(self._release_when_idle())
+
+    async def _release_when_idle(self) -> None:
+        """Give the account back between bursts. Reconnecting costs ~280 ms."""
+        timeout = self._config.idle_timeout
+        while True:
+            await asyncio.sleep(min(timeout, 1.0) if timeout > 1 else timeout / 2)
+            if self._client is None:
+                return
+            if self._in_flight:
+                continue
+            if time.monotonic() - self._last_used >= timeout:
+                await self.close()
+                return
 
     async def _open_client(self) -> TelegramClient:
         config = self._config
@@ -155,10 +242,18 @@ class TelethonGateway:
 
     def _release_lock(self) -> None:
         if self._lock is not None:
-            self._lock.__exit__(None, None, None)
+            self._lock.release()
             self._lock = None
 
     async def _entity(self, ref: ChatRef) -> Any:
+        key = (ref.kind, ref.value)
+        if key in self._entities:
+            return self._entities[key]
+        entity = await self._resolve_entity(ref)
+        self._entities[key] = entity
+        return entity
+
+    async def _resolve_entity(self, ref: ChatRef) -> Any:
         client = await self._connected()
         if ref.kind == "invite":
             invited = await client(CheckChatInviteRequest(str(ref.value)))
@@ -171,16 +266,19 @@ class TelethonGateway:
         return await client.get_entity(ref.value)
 
     async def me(self) -> dict:
-        client = await self._connected()
-        user = await client.get_me()
-        return {
-            "id": user.id,
-            "name": label(utils.get_display_name(user)),
-            "username": getattr(user, "username", None),
-        }
+        async with self._session() as client:
+            user = await client.get_me()
+            return {
+                "id": user.id,
+                "name": label(utils.get_display_name(user)),
+                "username": getattr(user, "username", None),
+            }
 
     async def dialogs(self, query: str | None, limit: int) -> Batch:
-        client = await self._connected()
+        async with self._session() as client:
+            return await self._scan_dialogs(client, query, limit)
+
+    async def _scan_dialogs(self, client: Any, query: str | None, limit: int) -> Batch:
         needle = (query or "").casefold()
         found: list[dict] = []
         scanned = 0
@@ -210,7 +308,8 @@ class TelethonGateway:
         return Batch(rows=found, scanned=scanned, scan_truncated=truncated)
 
     async def resolve(self, ref: ChatRef) -> dict:
-        entity = await self._entity(ref)
+        async with self._session():
+            entity = await self._entity(ref)
         return {
             "id": utils.get_peer_id(entity),
             "title": label(utils.get_display_name(entity)),
@@ -226,7 +325,10 @@ class TelethonGateway:
         page we return, or a filter would report "nothing" while the matches sat
         one page further back.
         """
-        client = await self._connected()
+        async with self._session() as client:
+            return await self._walk_history(client, ref, **criteria)
+
+    async def _walk_history(self, client: Any, ref: ChatRef, **criteria: Any) -> Batch:
         entity = await self._entity(ref)
         username = getattr(entity, "username", None)
         internal = _internal_id(entity)
@@ -289,7 +391,12 @@ class TelethonGateway:
 
     async def search(self, query: str, ref: ChatRef | None, **criteria: Any) -> Batch:
         """Search results arrive newest first, so paging runs backwards on max_id."""
-        client = await self._connected()
+        async with self._session() as client:
+            return await self._run_search(client, query, ref, **criteria)
+
+    async def _run_search(
+        self, client: Any, query: str, ref: ChatRef | None, **criteria: Any
+    ) -> Batch:
         entity = await self._entity(ref) if ref else None
         username = getattr(entity, "username", None) if entity else None
         internal = _internal_id(entity) if entity else None
@@ -321,7 +428,12 @@ class TelethonGateway:
         )
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:
-        client = await self._connected()
+        async with self._session() as client:
+            return await self._fetch_media(client, ref, message_id, dest)
+
+    async def _fetch_media(
+        self, client: Any, ref: ChatRef, message_id: int, dest: Path
+    ) -> str:
         entity = await self._entity(ref)
         messages = await client.get_messages(entity, ids=[message_id])
         message = messages[0] if messages else None
@@ -342,9 +454,9 @@ class TelethonGateway:
         return str(_with_safe_name(Path(saved)))
 
     async def send(self, ref: ChatRef, text: str) -> dict:
-        client = await self._connected()
-        entity = await self._entity(ref)
-        sent = await client.send_message(entity, text)
+        async with self._session() as client:
+            entity = await self._entity(ref)
+            sent = await client.send_message(entity, text)
         return {
             "id": sent.id,
             "chat_id": utils.get_peer_id(entity),
@@ -359,9 +471,10 @@ class TelethonGateway:
         )
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.disconnect()
-            self._client = None
+        client, self._client = self._client, None
+        self._entities.clear()
+        if client is not None:
+            await client.disconnect()
         self._release_lock()
 
 

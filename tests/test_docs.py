@@ -33,6 +33,8 @@ def test_readme_documents_every_environment_variable():
         "TELEGRAM_PLUGIN_ALLOW_SEND",
         "TELEGRAM_MAX_DOWNLOAD_BYTES",
         "TELEGRAM_PLUGIN_SEND_LIMIT",
+        "TELEGRAM_IDLE_TIMEOUT",
+        "TELEGRAM_LOCK_WAIT",
     ):
         assert variable in README, variable
         assert variable in ENV_EXAMPLE, variable
@@ -75,6 +77,8 @@ def test_the_design_document_documents_every_environment_variable():
         "TELEGRAM_OUTPUT_ROOT",
         "TELEGRAM_MAX_DOWNLOAD_BYTES",
         "TELEGRAM_PLUGIN_SEND_LIMIT",
+        "TELEGRAM_IDLE_TIMEOUT",
+        "TELEGRAM_LOCK_WAIT",
     ):
         assert variable in design, variable
 
@@ -120,3 +124,10 @@ def test_the_design_document_describes_every_skill_that_ships():
     for directory in (REPO / "skills").iterdir():
         if directory.is_dir():
             assert f"skills/{directory.name}/SKILL.md" in design, directory.name
+
+
+def test_the_readme_explains_the_one_account_several_sessions_reality():
+    assert "One account, several sessions" in README
+    assert "280 ms" in README_FLAT, "the number that justifies releasing the lock"
+    for variable in ("TELEGRAM_IDLE_TIMEOUT", "TELEGRAM_LOCK_WAIT"):
+        assert variable in README, variable

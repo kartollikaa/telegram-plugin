@@ -171,6 +171,24 @@ over activity that looks like automated bulk collection. This is your account an
 your risk: read your own chats, and do not point this at an account that is not
 yours.
 
+## One account, several sessions
+
+Telegram revokes an auth key used by two clients at once, so only one process may
+hold the session at a time. That is not negotiable — but it does not have to mean
+one *session* at a time.
+
+A plugin installed at user scope starts a server per agent session, so several
+will want the same account. The server therefore **connects on demand and lets go
+after `TELEGRAM_IDLE_TIMEOUT` seconds of inactivity**, and a call that finds the
+session busy **waits up to `TELEGRAM_LOCK_WAIT` seconds** instead of failing. In
+practice: whoever asks first works immediately, the others pause a moment. Coming
+back costs about 280 ms, measured — the session file already holds the auth key,
+so reconnecting is not a fresh handshake.
+
+If the wait runs out, the answer says which lock is held and what to do. The most
+common cause is a long-lived session in another window; it will let go by itself
+once it stops working.
+
 ## Commands
 
 Two, both usable from inside a session:
@@ -243,6 +261,8 @@ do damage on a misread instruction.
 | `TELEGRAM_PLUGIN_PYTHON` | interpreter override, skips the virtualenv | unset |
 | `TELEGRAM_PLUGIN_ALLOW_SEND` | `1` registers `send_message` | unset |
 | `TELEGRAM_PLUGIN_SEND_LIMIT` | messages one server process may send | `20` |
+| `TELEGRAM_IDLE_TIMEOUT` | seconds of inactivity before the account is released | `60` |
+| `TELEGRAM_LOCK_WAIT` | seconds to wait for a session another process holds | `20` |
 
 The state directory is created `0700`, and `.env` and the session file `0600`.
 
