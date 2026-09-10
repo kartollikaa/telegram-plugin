@@ -171,6 +171,15 @@ over activity that looks like automated bulk collection. This is your account an
 your risk: read your own chats, and do not point this at an account that is not
 yours.
 
+## Commands
+
+Two, both usable from inside a session:
+
+| Command | What it does |
+|---|---|
+| `/telegram:read` | the flows — find a chat, read it, search, download, export — and the rules that keep results small |
+| `/telegram:login` | authorises the session, or explains why it is not authorised |
+
 ## Tools
 
 | Tool | What it does |

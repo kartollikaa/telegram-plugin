@@ -108,3 +108,15 @@ def test_every_manifest_agrees_with_the_package_version():
     for directory in (".claude-plugin", ".codex-plugin", ".cursor-plugin"):
         manifest = json.loads((REPO / directory / "plugin.json").read_text())
         assert manifest["version"] == version, directory
+
+
+def test_the_readme_names_both_commands():
+    for command in ("/telegram:read", "/telegram:login"):
+        assert command in README, command
+
+
+def test_the_design_document_describes_every_skill_that_ships():
+    design = (REPO / "docs/design.md").read_text()
+    for directory in (REPO / "skills").iterdir():
+        if directory.is_dir():
+            assert f"skills/{directory.name}/SKILL.md" in design, directory.name

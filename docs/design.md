@@ -37,8 +37,8 @@ code. Skills and the launcher are shared; only the manifests differ.
 .cursor-plugin/plugin.json   Cursor manifest
 bin/telegram-mcp             universal launcher — any MCP host can call this
 bin/telegram-login           interactive login, run by a human in a terminal
-skills/telegram/SKILL.md     how to use the tools; output-hygiene rules
-skills/login/SKILL.md        /telegram:login — checks state, hands over a command
+skills/read/SKILL.md         /telegram:read — the flows, and the output-hygiene rules
+skills/login/SKILL.md        /telegram:login — drives a login to completion
 src/telegram_plugin/         the server and its core
 tests/                       pytest, no network
 ```

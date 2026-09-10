@@ -150,7 +150,7 @@ def test_the_documented_thresholds_are_the_ones_in_the_code():
     assert LABEL_LIMIT == 80
 
     repo = Path(__file__).resolve().parents[1]
-    for document in ("README.md", "docs/design.md", "skills/telegram/SKILL.md"):
+    for document in ("README.md", "docs/design.md", "skills/read/SKILL.md"):
         text = (repo / document).read_text()
         assert str(TEXT_LIMIT) in text, f"{document} must state the truncation threshold"
     for document in ("README.md", "docs/design.md"):

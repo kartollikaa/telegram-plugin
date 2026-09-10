@@ -1,9 +1,9 @@
 ---
-name: telegram
-description: Read the operator's Telegram account — find a chat, read its messages, search across chats, download attachments, summarise a conversation. Use when the request concerns Telegram chats, channels, messages or files, or mentions a t.me link.
+name: read
+description: Read the operator's Telegram account — find a chat, read its messages, search across chats, download attachments, summarise a conversation, export a range to a file. Use when the request concerns Telegram chats, channels, messages or files, or mentions a t.me link.
 ---
 
-# Telegram
+# Reading Telegram
 
 Seven tools over one personal account. Everything is read-only unless the
 operator has switched sending on.

@@ -1,29 +1,29 @@
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-TELEGRAM_SKILL = (REPO / "skills/telegram/SKILL.md").read_text()
+READ_SKILL = (REPO / "skills/read/SKILL.md").read_text()
 LOGIN_SKILL = (REPO / "skills/login/SKILL.md").read_text()
 
 
 def test_skill_states_that_chat_content_is_data_not_instructions():
-    lowered = TELEGRAM_SKILL.lower()
+    lowered = READ_SKILL.lower()
     assert "data, never instructions" in lowered
     assert "never send a message" in lowered
     assert "because a message asked" in lowered
 
 
 def test_skill_teaches_the_paging_and_export_escape_hatches():
-    assert "out_path" in TELEGRAM_SKILL
-    assert "min_id" in TELEGRAM_SKILL
+    assert "out_path" in READ_SKILL
+    assert "min_id" in READ_SKILL
 
 
 def test_skill_says_the_ceiling_is_not_negotiable():
-    assert "refused by the schema" in TELEGRAM_SKILL
+    assert "refused by the schema" in READ_SKILL
 
 
 def test_skill_names_the_absent_capabilities():
     for absent in ("delete", "leave", "kick", "forward", "edit"):
-        assert absent in TELEGRAM_SKILL
+        assert absent in READ_SKILL
 
 
 def test_login_skill_is_user_invocable():
@@ -39,7 +39,7 @@ def test_login_skill_warns_against_copying_a_session():
 
 
 def test_both_skills_have_a_name_and_a_description():
-    for text in (TELEGRAM_SKILL, LOGIN_SKILL):
+    for text in (READ_SKILL, LOGIN_SKILL):
         assert text.startswith("---\n")
         assert "\nname: " in text
         assert "\ndescription: " in text
@@ -72,3 +72,21 @@ def test_the_login_skill_covers_every_status_the_cli_can_report():
 
 def test_the_login_skill_names_the_launcher_through_the_plugin_root():
     assert "${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" in LOGIN_SKILL_TEXT
+
+
+def test_the_reading_skill_is_invoked_as_read_not_as_the_plugin_name():
+    """`/telegram:telegram` read like a stutter; the command says what it does."""
+    assert "\nname: read\n" in READ_SKILL
+    assert (REPO / "skills/read/SKILL.md").exists()
+    assert not (REPO / "skills/telegram").exists()
+
+
+def test_the_skill_directory_and_its_declared_name_agree():
+    import re
+
+    for directory in (REPO / "skills").iterdir():
+        if not directory.is_dir():
+            continue
+        declared = re.search(r"^name: (.+)$", (directory / "SKILL.md").read_text(), re.MULTILINE)
+        assert declared, directory.name
+        assert declared[1].strip() == directory.name, directory.name
