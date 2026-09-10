@@ -34,8 +34,8 @@ def test_login_skill_warns_against_copying_a_session():
     assert "never copy a `.session` file" in LOGIN_SKILL.lower()
 
 
-def test_login_skill_does_not_ask_the_agent_to_type_secrets():
-    assert "never print their values" in LOGIN_SKILL.lower()
+# Superseded by test_the_login_skill_refuses_to_collect_secrets_in_conversation,
+# which asserts the same rule plus the two the rewrite added.
 
 
 def test_both_skills_have_a_name_and_a_description():
@@ -43,3 +43,32 @@ def test_both_skills_have_a_name_and_a_description():
         assert text.startswith("---\n")
         assert "\nname: " in text
         assert "\ndescription: " in text
+
+
+LOGIN_SKILL_TEXT = (REPO / "skills/login/SKILL.md").read_text()
+
+
+def test_the_login_skill_drives_the_flow_itself():
+    """It must run the steps, not hand over a script to run by hand."""
+    assert "--status" in LOGIN_SKILL_TEXT
+    assert "--qr" in LOGIN_SKILL_TEXT
+    assert "auth-status.json" in LOGIN_SKILL_TEXT
+    assert "Drive this yourself" in LOGIN_SKILL_TEXT
+
+
+def test_the_login_skill_refuses_to_collect_secrets_in_conversation():
+    lowered = LOGIN_SKILL_TEXT.lower()
+    assert "do not ask the operator to" in lowered
+    assert "never printed back" in lowered
+    assert "must not travel through a tool call" in lowered
+
+
+def test_the_login_skill_covers_every_status_the_cli_can_report():
+    from telegram_plugin.login import DEFAULT_QR_TIMEOUT  # noqa: F401
+
+    for state in ("credentials", "authorized", "session_in_use", "expired", "needs_password"):
+        assert state in LOGIN_SKILL_TEXT, state
+
+
+def test_the_login_skill_names_the_launcher_through_the_plugin_root():
+    assert "${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" in LOGIN_SKILL_TEXT

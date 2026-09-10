@@ -1,42 +1,95 @@
 ---
 name: login
-description: Authorise this plugin's Telegram session, or explain why a tool says the session is not authorised. Use when Telegram tools report "Session is not authorised", or the operator asks how to log in or set up Telegram credentials.
+description: Authorise this plugin's Telegram session, check whether it is authorised, or explain why a tool says it is not. Use when Telegram tools report "Session is not authorised", when the operator asks to log in, set up or connect Telegram, or asks which account is connected.
 user-invocable: true
 allowed-tools:
-  - Bash(ls *)
-  - Bash(cat *)
+  - Bash
   - Read
 ---
 
 # Logging in
 
-The session belongs to this plugin alone. Never copy a `.session` file from
-another project: Telegram revokes an auth key that two clients use at once, and
-both would stop working.
+Drive this yourself — do not hand the operator a script to run unless the last step
+below says you must. Nothing here asks anyone to paste a credential into the
+conversation, and nothing here needs a code typed at a prompt.
 
-## Check the state first
+`LOGIN` below means `${CLAUDE_PLUGIN_ROOT}/bin/telegram-login`. If that path did not
+expand, find `bin/telegram-login` two directories above this skill file.
 
-The state directory is `$TELEGRAM_STATE_DIR`, or `~/.local/state/telegram-plugin`
-by default. Look for two things:
+## 1. Look before doing anything
 
-- `telegram.session` — present means a login has happened before.
-- `.env` — must carry `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`, obtained from
-  https://my.telegram.org. Never print their values back to the operator.
-
-## Then hand the command over
-
-Logging in is interactive: Telegram sends a code and the CLI waits for it to be
-typed. That cannot be done for the operator from inside a session, so give them
-the command and let them run it in their own terminal:
-
-```
-<plugin directory>/bin/telegram-login
+```bash
+LOGIN --status
 ```
 
-It asks for the phone number, then the code, then a two-factor password if the
-account has one. The password prompt is hidden. Nothing is accepted as a
-command-line argument.
+It prints JSON and never changes anything. Act on `credentials`, `authorized` and
+`session_in_use`:
 
-Once it prints `Authorised as …`, the tools work in the next session. If it
-reports that another process holds the session, the plugin's server is already
-running with it — stop that client first.
+- `"credentials": "missing"` → go to step 2.
+- `"authorized": true` → say which account is connected (`account.name`, `account.id`)
+  and stop. There is nothing to do.
+- `"session_in_use": true` → a client already holds this session, almost certainly
+  this plugin's own MCP server. That means a session exists. Say so; a fresh login
+  would need that client stopped first.
+- otherwise → go to step 3.
+
+## 2. Credentials, if they are missing
+
+The API id and hash come from https://my.telegram.org. **Do not ask the operator to
+paste them into the conversation, and do not read them back to them.** Tell them the
+file to put them in — the `state_dir` from the status output, in `.env`:
+
+```
+TELEGRAM_API_ID=
+TELEGRAM_API_HASH=
+```
+
+`.env.example` in the plugin root is a template. Then run step 1 again.
+
+## 3. Log in by confirming a link
+
+This is the whole point of doing it here: no code is typed, so it completes without
+leaving the session. Start it detached, because it waits for the link to be confirmed:
+
+```bash
+nohup LOGIN --qr --timeout 60 >/dev/null 2>&1 &
+```
+
+Then read the link from the status file — `auth-status.json` in the `state_dir`:
+
+```bash
+sleep 2 && cat <state_dir>/auth-status.json
+```
+
+Give the operator the `url` verbatim and tell them what to do with it: open it on a
+device already signed in to Telegram, or scan it as a QR code from
+**Settings → Devices → Link Desktop Device**.
+
+Then poll the same file every few seconds until `state` changes:
+
+- `authorized` → report `account.name` and `account.id`. Done; tools work in the next
+  session.
+- `expired` → the link was never confirmed. Offer to start again from step 3.
+- `needs_password` → step 4.
+
+## 4. Two-factor accounts
+
+A confirmed link is not enough when the account has a two-factor password, and a
+password must not travel through a tool call. This is the one case where the operator
+finishes in their own terminal:
+
+```
+<plugin root>/bin/telegram-login
+```
+
+It asks for the phone number, the code Telegram sends, and the password with hidden
+input. Say plainly why the handoff is happening rather than just printing a command.
+
+## What never happens here
+
+- The session is this plugin's own. **Never copy a `.session` file from another
+  application:** Telegram revokes an auth key used by two clients at once, and both
+  stop working.
+- No credential, code or password is ever requested in the conversation or passed as
+  a command-line argument.
+- Values from `.env` are never printed back, not even partially.

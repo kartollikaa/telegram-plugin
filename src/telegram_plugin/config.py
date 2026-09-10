@@ -47,6 +47,11 @@ class Config:
     def dotenv_path(self) -> Path:
         return self.state_dir / ".env"
 
+    @property
+    def auth_status_path(self) -> Path:
+        """Where a login in progress publishes its link and its outcome."""
+        return self.state_dir / "auth-status.json"
+
 
 def load_config(env: Mapping[str, str], dotenv_text: str | None = None) -> Config:
     from_file = parse_dotenv(dotenv_text) if dotenv_text else {}

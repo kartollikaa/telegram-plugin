@@ -75,6 +75,11 @@ finished.
 Requirements: Python 3.10 or newer, with `python3 -m venv` available (on
 Debian/Ubuntu that is the `python3-venv` package).
 
+The virtualenv lives inside the state directory, so pointing
+`TELEGRAM_STATE_DIR` somewhere else — a second account, a throwaway test — gets
+its own dependency install. Set `TELEGRAM_PLUGIN_PYTHON` to an interpreter that
+already has them if you would rather share one.
+
 ## Credentials
 
 Create an application at https://my.telegram.org to get an API id and hash. Copy
@@ -94,16 +99,37 @@ The session belongs to this plugin alone. **Never copy a `.session` file from
 another application:** Telegram revokes an auth key used by two clients at once,
 which breaks both of them.
 
-```bash
-./bin/telegram-login
+**From inside a session, just ask:**
+
+```
+/telegram:login
 ```
 
-It asks for a phone number, the code Telegram sends, and a two-factor password
-if the account has one. The password prompt is hidden, and no secret is accepted
-as a command-line argument — nothing lands in shell history or the process
-table. Because it is interactive, run it yourself in a terminal; an agent cannot
-do it for you. Until it succeeds, every tool answers with the command to run
-rather than a traceback.
+The bundled skill drives the whole thing: it checks the state, installs the
+dependencies if they are missing, then logs in by publishing a `tg://login` link
+you confirm on a device already signed in to Telegram — or scan as a QR code
+from **Settings → Devices → Link Desktop Device**. Nothing is typed, so no code
+or password passes through the conversation, and no agent ever sees a credential.
+
+The same thing by hand:
+
+```bash
+./bin/telegram-login --status     # is it authorised, and as whom?
+./bin/telegram-login --qr         # publish a link and wait for it
+./bin/telegram-login              # phone, code and password at a prompt
+```
+
+`--status` prints JSON and changes nothing. It also answers while the MCP server
+is running, saying the session is in use rather than failing.
+
+**Two-factor accounts finish in a terminal.** A confirmed link is not enough when
+the account has a second factor, and a password must not travel through a tool
+call — so `--qr` stops with `needs_password` and the plugin points you at
+`bin/telegram-login`, which asks with hidden input. Nothing is ever accepted as a
+command-line argument, so no secret lands in shell history or the process table.
+
+Until a login succeeds, every tool answers with the command to run rather than a
+traceback.
 
 The server takes an exclusive lock on the session file. If two hosts try to use
 one session at the same time, the second is told so instead of racing for the
