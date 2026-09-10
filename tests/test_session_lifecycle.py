@@ -4,8 +4,10 @@ locked the account until that session died. Reconnecting costs ~280 ms, measured
 so there was never a reason to hold it."""
 
 import asyncio
+import errno
 import multiprocessing as mp
 import time
+from types import SimpleNamespace
 
 import pytest
 from telethon.tl.types import User
@@ -16,6 +18,20 @@ from telegram_plugin.errors import SessionLocked
 from telegram_plugin.refs import parse_chat_ref
 
 REF = parse_chat_ref("@somechannel")
+
+
+async def until(condition, seconds=5.0, note=""):
+    """Wait for a condition instead of guessing how long the scheduler needs.
+
+    A fixed sleep racing a 50 ms timeout flakes on a loaded runner, and the failure
+    reads like a lock-lifecycle regression rather than a slow machine.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(note or "condition never became true")
 
 
 class CountingClient:
@@ -82,7 +98,7 @@ async def test_work_after_an_idle_release_simply_reconnects(tmp_path):
     client = CountingClient()
     gateway, _ = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="0.05")
     await gateway.me()
-    await asyncio.sleep(0.35)
+    await until(lambda: client.disconnects == 1)
     await gateway.me()
     assert client.connects == 2
     await gateway.close()
@@ -118,7 +134,7 @@ async def test_the_entity_cache_does_not_outlive_the_connection(tmp_path):
     client = CountingClient()
     gateway, _ = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="0.05")
     await gateway.resolve(REF)
-    await asyncio.sleep(0.35)
+    await until(lambda: client.disconnects == 1)
     await gateway.resolve(REF)
     assert client.entity_lookups == 2, "entities belong to a client; a new client re-resolves"
     await gateway.close()
@@ -168,3 +184,136 @@ def test_the_new_settings_have_defaults_and_can_be_overridden():
                          "TELEGRAM_LOCK_WAIT": "1.5"})
     assert tuned.idle_timeout == 5.0
     assert tuned.lock_wait == 1.5
+
+
+class BlockingDisconnectClient(CountingClient):
+    """Lets a test hold the gateway inside close()'s disconnect await."""
+
+    def __init__(self):
+        super().__init__()
+        self.disconnect_started = asyncio.Event()
+        self.may_finish = asyncio.Event()
+
+    async def disconnect(self):
+        self.disconnects += 1
+        self.disconnect_started.set()
+        await self.may_finish.wait()
+
+
+async def test_a_reconnect_during_close_still_ends_up_releasable(tmp_path):
+    """Pins the ordering inside close() that makes this safe.
+
+    A call arriving while close() awaits disconnect() must end up with a connection
+    something will release. What protects it is that the lock is released *last*:
+    the reconnect blocks on the lock until close is finished, so it never sees a
+    half-closed gateway. Move the release before the disconnect and this test goes
+    red — the reconnect gets the account while the old watcher is still winding
+    down, and nothing arms a new one.
+    """
+    client = BlockingDisconnectClient()
+    gateway, _ = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="0.05")
+    await gateway.me()
+
+    await until(client.disconnect_started.is_set, note="the idle watcher must start closing")
+    reconnect = asyncio.create_task(gateway.me())
+    await asyncio.sleep(0.05)  # let the reconnect reach the lock
+    client.may_finish.set()
+    await reconnect
+
+    assert client.connects == 2
+    await until(
+        lambda: client.disconnects == 2,
+        note="the reconnected client was left with no idle watcher",
+    )
+    await gateway.close()
+
+
+async def test_closing_from_outside_cancels_a_sleeping_watcher(tmp_path):
+    client = CountingClient()
+    gateway, _ = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="30")
+    await gateway.me()
+    watcher = gateway._idle_watcher
+    assert watcher is not None and not watcher.done()
+
+    await gateway.close()
+
+    await until(watcher.done, note="close() must not leave the watcher pending")
+    assert gateway._idle_watcher is None
+
+
+async def test_a_lock_error_that_is_not_contention_is_not_disguised_as_it(tmp_path, monkeypatch):
+    """ENOLCK reported as "held by another process" sends the operator hunting a
+    process that does not exist."""
+    import fcntl
+
+    from telegram_plugin.client import _try_session_lock
+
+    def refuse(descriptor, operation):
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    monkeypatch.setattr(fcntl, "flock", refuse)
+    with pytest.raises(OSError) as excinfo:
+        _try_session_lock(tmp_path / "telegram.session")
+    assert not isinstance(excinfo.value, SessionLocked)
+    assert excinfo.value.errno == errno.ENOLCK
+
+
+async def test_a_busy_lock_is_still_reported_as_busy(tmp_path, monkeypatch):
+    import fcntl
+
+    from telegram_plugin.client import _try_session_lock
+
+    def busy(descriptor, operation):
+        raise OSError(errno.EAGAIN, "would block")
+
+    monkeypatch.setattr(fcntl, "flock", busy)
+    assert _try_session_lock(tmp_path / "telegram.session") is None
+
+
+class InviteClient(CountingClient):
+    def __init__(self):
+        super().__init__()
+        self.invite_checks = 0
+
+    async def __call__(self, request):
+        self.invite_checks += 1
+        return SimpleNamespace(chat=User(id=5, first_name="Invited"))
+
+
+async def test_an_invite_is_re_checked_rather_than_cached(tmp_path):
+    """Resolving an invite answers "is this account a member?" — an answer that
+    changes when the operator joins or leaves."""
+    client = InviteClient()
+    gateway, _ = _gateway(tmp_path, client)
+    invite = parse_chat_ref("https://t.me/+AbCdEf")
+    await gateway.resolve(invite)
+    await gateway.resolve(invite)
+    assert client.invite_checks == 2
+    await gateway.close()
+
+
+def test_a_negative_timeout_falls_back_instead_of_disabling_the_release():
+    negative = load_config({"HOME": "/tmp", "TELEGRAM_IDLE_TIMEOUT": "-5",
+                            "TELEGRAM_LOCK_WAIT": "-1"})
+    assert negative.idle_timeout == 60.0
+    assert negative.lock_wait == 20.0
+    off = load_config({"HOME": "/tmp", "TELEGRAM_IDLE_TIMEOUT": "0"})
+    assert off.idle_timeout == 0.0, "zero stays a deliberate opt-out"
+
+
+async def test_the_server_hands_the_account_back_on_shutdown(tmp_path):
+    """Without this the process exits holding the account, and the operator's other
+    sessions keep being told it is busy by a server that no longer exists."""
+    from telegram_plugin.server import closing_lifespan
+
+    client = CountingClient()
+    gateway, _ = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="30")
+    await gateway.me()
+    assert client.disconnects == 0
+
+    async with closing_lifespan(gateway)(None):
+        pass
+
+    assert client.disconnects == 1
+    with session_lock(gateway._config.session_path):
+        pass  # the lock came back with it

@@ -2,6 +2,7 @@ import multiprocessing as mp
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -70,4 +71,45 @@ def test_login_refuses_while_the_server_holds_the_session(tmp_path):
         assert "Traceback" not in result.stderr
     finally:
         release.set()
+        holder.join(10)
+
+
+def _hold_the_session_briefly(path, ready, seconds):
+    from telegram_plugin.client import session_lock
+
+    with session_lock(path):
+        ready.set()
+        time.sleep(seconds)
+
+
+def test_the_login_waits_for_a_session_the_server_is_about_to_release(tmp_path):
+    """The server now lets go once it idles, so refusing instantly would send the
+    operator hunting a client that is seconds from releasing."""
+    session = tmp_path / "telegram.session"
+    ready = mp.Event()
+    holder = mp.Process(target=_hold_the_session_briefly, args=(session, ready, 0.7))
+    holder.start()
+    try:
+        assert ready.wait(10)
+        environment = {
+            **os.environ,
+            "TELEGRAM_STATE_DIR": str(tmp_path),
+            "TELEGRAM_LOCK_WAIT": "10",
+            "PYTHONPATH": str(REPO / "src"),
+        }
+        for leaked in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH"):
+            environment.pop(leaked, None)
+        finished = subprocess.run(
+            [sys.executable, "-m", "telegram_plugin.login"],
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=120,
+            check=False,
+        )
+        # 2 is "no credentials" — reached only by getting past the lock.
+        # 1 would mean it refused because the session was busy.
+        assert finished.returncode == 2, finished.stderr
+        assert "my.telegram.org" in finished.stderr
+    finally:
         holder.join(10)

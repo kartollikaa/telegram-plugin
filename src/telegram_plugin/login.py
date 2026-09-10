@@ -211,6 +211,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
 def _status_command(config: Config) -> int:
     """A running server holding the session is itself an answer, not a failure."""
     try:
+        # Deliberately not waiting: "someone is using it" is the status, and a
+        # status command that blocks for twenty seconds is a worse answer.
         with session_lock(config.session_path):
             return asyncio.run(_report_status(config))
     except SessionLocked:
@@ -240,8 +242,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Taken before anything else, including the credentials check: if the
         # server holds this session, logging in here would put two clients on one
-        # auth key and Telegram would revoke it.
-        with session_lock(config.session_path):
+        # auth key and Telegram would revoke it. Waiting, because the server lets
+        # go once it goes idle — refusing outright would send the operator hunting
+        # a client that is about to release on its own.
+        with session_lock(config.session_path, config.lock_wait):
             if not (config.api_id and config.api_hash):
                 raise MissingCredentials()
             if arguments.qr:

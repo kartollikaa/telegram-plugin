@@ -8,10 +8,11 @@ request, never the importing one.
 from __future__ import annotations
 
 import asyncio
+import errno
 import fcntl
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,17 +116,48 @@ class SessionLockHandle:
             self._descriptor = None
 
 
+_BUSY = frozenset({errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK})
+
+
 def _try_session_lock(path: str | Path) -> SessionLockHandle | None:
+    """None means busy. Anything else — a filesystem without locks, an exhausted
+    lock table, a lock file owned by someone else — is raised, because reporting it
+    as "held by another process" sends the operator hunting a process that is not
+    there."""
     lock_path = Path(f"{path}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    os.chmod(lock_path, 0o600)
     try:
+        os.chmod(lock_path, 0o600)
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as exc:
         os.close(descriptor)
-        return None
+        if exc.errno in _BUSY:
+            return None
+        raise
+    except BaseException:
+        os.close(descriptor)
+        raise
     return SessionLockHandle(descriptor)
+
+
+class _LockAttempt:
+    """The waiting policy, shared so the async and sync forms cannot drift apart."""
+
+    def __init__(self, path: str | Path, timeout: float) -> None:
+        self._path = path
+        self._deadline = time.monotonic() + max(timeout, 0.0)
+
+    def try_now(self) -> SessionLockHandle | None:
+        handle = _try_session_lock(self._path)
+        if handle is not None:
+            return handle
+        if time.monotonic() >= self._deadline:
+            raise SessionLocked(str(self._path))
+        return None
+
+    def delay(self) -> float:
+        return min(0.1, max(self._deadline - time.monotonic(), 0.01))
 
 
 async def acquire_session_lock(path: str | Path, timeout: float = 0.0) -> SessionLockHandle:
@@ -134,28 +166,19 @@ async def acquire_session_lock(path: str | Path, timeout: float = 0.0) -> Sessio
     One server per session means a second session used to be told "held by another
     process" for as long as the first lived. Waiting turns that into a pause.
     """
-    deadline = time.monotonic() + max(timeout, 0.0)
-    while True:
-        handle = _try_session_lock(path)
-        if handle is not None:
-            return handle
-        if time.monotonic() >= deadline:
-            raise SessionLocked(str(path))
-        await asyncio.sleep(min(0.1, max(deadline - time.monotonic(), 0.01)))
+    attempt = _LockAttempt(path, timeout)
+    while (handle := attempt.try_now()) is None:
+        await asyncio.sleep(attempt.delay())
+    return handle
 
 
 @contextmanager
 def session_lock(path: str | Path, timeout: float = 0.0) -> Iterator[None]:
     """The synchronous form, for the login CLI. Two clients on one auth key make
     Telegram revoke it."""
-    deadline = time.monotonic() + max(timeout, 0.0)
-    while True:
-        handle = _try_session_lock(path)
-        if handle is not None:
-            break
-        if time.monotonic() >= deadline:
-            raise SessionLocked(str(path))
-        time.sleep(min(0.1, max(deadline - time.monotonic(), 0.01)))
+    attempt = _LockAttempt(path, timeout)
+    while (handle := attempt.try_now()) is None:
+        time.sleep(attempt.delay())
     try:
         yield
     finally:
@@ -171,21 +194,26 @@ class TelethonGateway:
         self._gate = asyncio.Lock()
         self._in_flight = 0
         self._last_used = 0.0
+        self._quiet = asyncio.Event()
+        self._quiet.set()
         self._idle_watcher: asyncio.Task | None = None
 
     @asynccontextmanager
-    async def _session(self) -> Any:
+    async def _session(self) -> AsyncIterator[TelegramClient]:
         """Every operation runs inside this: it keeps the idle watcher honest.
 
         Reentrant by counting, because some operations resolve a chat first.
         """
         client = await self._connected()
         self._in_flight += 1
+        self._quiet.clear()
         try:
             yield client
         finally:
             self._in_flight -= 1
             self._last_used = time.monotonic()
+            if not self._in_flight:
+                self._quiet.set()
 
     async def _connected(self) -> TelegramClient:
         async with self._gate:
@@ -208,10 +236,10 @@ class TelethonGateway:
                 raise
             self._client = client
             self._entities.clear()
-            self._start_idle_watch()
+            self._arm_idle_release()
             return client
 
-    def _start_idle_watch(self) -> None:
+    def _arm_idle_release(self) -> None:
         if self._config.idle_timeout <= 0:
             return
         if self._idle_watcher is not None and not self._idle_watcher.done():
@@ -219,17 +247,25 @@ class TelethonGateway:
         self._idle_watcher = asyncio.create_task(self._release_when_idle())
 
     async def _release_when_idle(self) -> None:
-        """Give the account back between bursts. Reconnecting costs ~280 ms."""
+        """Give the account back between bursts, so another session can have it.
+
+        Sleeps to the release deadline rather than polling: the deadline is known
+        exactly, and every extra wakeup is paid by every server on the machine.
+        Reconnecting is cheap because the session file already holds the auth key.
+        """
         timeout = self._config.idle_timeout
         while True:
-            await asyncio.sleep(min(timeout, 1.0) if timeout > 1 else timeout / 2)
+            await self._quiet.wait()
+            remaining = self._last_used + timeout - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+                continue
+            if self._in_flight:
+                continue  # a call started while we slept; wait for quiet again
             if self._client is None:
                 return
-            if self._in_flight:
-                continue
-            if time.monotonic() - self._last_used >= timeout:
-                await self.close()
-                return
+            await self.close()
+            return
 
     async def _open_client(self) -> TelegramClient:
         config = self._config
@@ -241,11 +277,15 @@ class TelethonGateway:
         return client
 
     def _release_lock(self) -> None:
-        if self._lock is not None:
-            self._lock.release()
-            self._lock = None
+        lock, self._lock = self._lock, None
+        if lock is not None:
+            lock.release()
 
     async def _entity(self, ref: ChatRef) -> Any:
+        if ref.kind == "invite":
+            # Resolving an invite answers "is this account a member?" — caching it
+            # would keep reporting a membership that may have changed since.
+            return await self._resolve_entity(ref)
         key = (ref.kind, ref.value)
         if key in self._entities:
             return self._entities[key]
@@ -471,11 +511,25 @@ class TelethonGateway:
         )
 
     async def close(self) -> None:
+        """Everything is captured before the first await.
+
+        A call arriving while `disconnect()` is in flight must see no client, no
+        lock and no watcher, so that it builds all three afresh — leaving the
+        watcher in place here is how a reconnected client ended up unwatched, and
+        holding the account for the life of the process again.
+        """
         client, self._client = self._client, None
+        lock, self._lock = self._lock, None
+        watcher, self._idle_watcher = self._idle_watcher, None
         self._entities.clear()
+        self._quiet.set()
+
+        if watcher is not None and watcher is not asyncio.current_task():
+            watcher.cancel()
         if client is not None:
             await client.disconnect()
-        self._release_lock()
+        if lock is not None:
+            lock.release()
 
 
 def _with_safe_name(saved: Path) -> Path:
