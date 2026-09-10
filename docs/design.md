@@ -50,6 +50,12 @@ Hosts other than the three above need no manifest at all — they point at
 { "mcpServers": { "telegram": { "command": "/path/to/telegram-plugin/bin/telegram-mcp" } } }
 ```
 
+The version has one home: `pyproject.toml`. The three manifests are pinned to it
+by tests, the launcher folds it into the install sentinel, and the server reads it
+at runtime to announce itself — from the source tree first, because the launcher
+puts `src/` on `PYTHONPATH`, and an `egg-info` left there by an editable install
+would otherwise answer with its install-time version for ever.
+
 ## Launcher and dependency bootstrap
 
 `bin/telegram-mcp` is the only entry point. It resolves an interpreter, ensures
@@ -310,7 +316,9 @@ testing are ordinary functions:
 - tool registration through the server's own tool list: `send_message` present
   with the flag set and absent without it, and the declared ceilings;
 - the unauthorised path, against a stand-in client rather than a mocked
-  Telethon.
+  Telethon;
+- the version the server announces, against `pyproject.toml`, in the source tree
+  and the installed case alike — it had drifted silently before anything checked it.
 
 Telethon itself is not mocked wholesale — the live path is verified by hand once,
 against a real account.
