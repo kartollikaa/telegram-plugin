@@ -56,11 +56,14 @@ def status_payload(config: Config, *, authorized: bool, account: dict | None) ->
     return payload
 
 
-def write_status(config: Config, payload: dict) -> None:
+def write_status(config: Config, payload: dict) -> dict:
+    """Every payload is stamped: whoever polls this file must be able to spot a stale one."""
     path = config.auth_status_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    stamped = {**payload, "written": datetime.now(timezone.utc).isoformat()}
+    path.write_text(json.dumps(stamped, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     path.chmod(0o600)
+    return stamped
 
 
 async def qr_login(
@@ -78,6 +81,9 @@ async def qr_login(
     """
     try:
         await client.connect()
+        # Telethon creates the session file on construction with the plain umask, and the
+        # auth key lands in it while we wait — tighten before that, not after.
+        _tighten(config.session_path)
         if await client.is_user_authorized():
             return _authorized(config, await _describe_me(client))
 
@@ -105,12 +111,12 @@ async def qr_login(
                     if _expired(qr):
                         await qr.recreate()
                     continue
-                return _finish(config, {
+                return write_status(config, {
                     "state": "expired",
                     "hint": "the link was never confirmed; start the login again",
                 })
             except SessionPasswordNeededError:
-                return _finish(config, {
+                return write_status(config, {
                     "state": "needs_password",
                     "hint": (
                         "this account has a two-factor password, which cannot be typed "
@@ -118,19 +124,14 @@ async def qr_login(
                     ),
                 })
             return _authorized(config, await _describe_me(client))
-        return _finish(config, {"state": "expired", "hint": "no attempts left"})
+        return write_status(config, {"state": "expired", "hint": "no attempts left"})
     finally:
         await client.disconnect()
 
 
 def _authorized(config: Config, account: dict) -> dict:
     _tighten(config.session_path)
-    return _finish(config, {"state": "authorized", "account": account})
-
-
-def _finish(config: Config, payload: dict) -> dict:
-    write_status(config, payload)
-    return payload
+    return write_status(config, {"state": "authorized", "account": account})
 
 
 async def _describe_me(client: Any) -> dict:
@@ -162,7 +163,7 @@ async def _interactive(config: Config) -> int:
             password=lambda: getpass.getpass("Two-factor password (input hidden): "),
         )
         account = await _describe_me(client)
-        _finish(config, {"state": "authorized", "account": account})
+        write_status(config, {"state": "authorized", "account": account})
         print(f"Authorised as {account['name']} (id {account['id']}).")
         print(f"Session stored at {config.session_path}")
         return 0
@@ -228,6 +229,17 @@ def _status_command(config: Config) -> int:
         return 0
 
 
+def _failed(config: Config, hint: str, *, code: int, state: str = "failed") -> int:
+    """The skill drives --qr detached and reads only the status file, so every way out of
+    this program has to leave its outcome there — stderr alone reaches nobody."""
+    try:
+        write_status(config, {"state": state, "hint": hint})
+    except OSError:
+        pass  # the state directory is what failed; stderr is still a channel
+    print(hint, file=sys.stderr)
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = _parse(sys.argv[1:] if argv is None else argv)
     environment = dict(os.environ)
@@ -249,17 +261,21 @@ def main(argv: list[str] | None = None) -> int:
             if not (config.api_id and config.api_hash):
                 raise MissingCredentials()
             if arguments.qr:
+                # Overwrite any outcome an earlier run left, before anyone starts polling.
+                write_status(config, {"state": "starting"})
                 client = TelegramClient(str(config.session_path), config.api_id, config.api_hash)
                 result = asyncio.run(qr_login(config, client, timeout=arguments.timeout))
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0 if result["state"] == "authorized" else 1
             return asyncio.run(_interactive(config))
-    except (SessionLocked, MissingCredentials) as exc:
-        print(describe(exc), file=sys.stderr)
-        return 1 if isinstance(exc, SessionLocked) else 2
+    except SessionLocked as exc:
+        return _failed(config, describe(exc), code=1)
+    except MissingCredentials as exc:
+        return _failed(config, describe(exc), code=2)
     except (EOFError, KeyboardInterrupt):
-        print("Cancelled — no session was written.", file=sys.stderr)
-        return 130
+        return _failed(config, "Cancelled — no session was written.", code=130, state="cancelled")
+    except Exception as exc:  # noqa: BLE001
+        return _failed(config, describe(exc), code=1)
 
 
 if __name__ == "__main__":

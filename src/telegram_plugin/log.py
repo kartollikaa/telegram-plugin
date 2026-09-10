@@ -17,7 +17,11 @@ def log(message: str) -> None:
 
 
 def config_summary(config: Config) -> str:
-    return (
+    summary = (
         f"state dir {config.state_dir}, session {config.session_name}, "
         f"sending {'enabled' if config.allow_send else 'disabled'}"
     )
+    if config.unreadable:
+        # Values, not just names, would put a misconfigured secret into the host's logs.
+        summary += f"; ignoring unreadable {', '.join(config.unreadable)}, using the defaults"
+    return summary

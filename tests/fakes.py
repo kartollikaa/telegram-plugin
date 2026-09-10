@@ -28,8 +28,11 @@ def _row(index: int, *, media: bool = False) -> dict:
 
 
 class FakeGateway:
-    def __init__(self, *, authorized: bool = True, message_count: int = 12) -> None:
+    def __init__(
+        self, *, authorized: bool = True, message_count: int = 12, scan_cap: int | None = None
+    ) -> None:
         self._authorized = authorized
+        self._scan_cap = scan_cap
         self.rows = [_row(i, media=i % 4 == 0) for i in range(1, message_count + 1)]
         self.sent: list[tuple[str, str]] = []
 
@@ -65,12 +68,18 @@ class FakeGateway:
         limit = criteria.get("limit")
         accepted: list[dict] = []
         scanned = 0
+        truncated = False
+        last_scanned_id: int | None = None
         for row in candidates:
             scanned += 1
-            if criteria.get("media_only") and "media" not in row:
-                continue
-            accepted.append(row)
-            if limit and len(accepted) >= limit:
+            last_scanned_id = row["id"]
+            if not (criteria.get("media_only") and "media" not in row):
+                accepted.append(row)
+                if limit and len(accepted) >= limit:
+                    break
+            # Same shape as the real gateway: the cap binds on rejected messages too.
+            if self._scan_cap and scanned >= self._scan_cap:
+                truncated = True
                 break
         bounded = bool(
             criteria.get("min_id") or criteria.get("max_id") or criteria.get("media_only")
@@ -78,25 +87,32 @@ class FakeGateway:
         return Batch(
             rows=accepted,
             scanned=scanned,
+            scan_truncated=truncated,
+            last_scanned_id=last_scanned_id,
             total=len(self.rows),
-            total_is_exact=not bounded,
+            total_is_exact=not bounded and not truncated,
         )
 
     async def search(self, query: str, ref: ChatRef | None, **criteria) -> Batch:
-        """Newest first, like Telegram's own search, then sorted ascending."""
+        """Newest first, like Telegram's own search; sorted ascending only inside one chat.
+
+        A global search keeps Telegram's order and ignores max_id, because ids are per-chat
+        and Telethon skips its own id filter when there is no entity.
+        """
         self._check()
         matches = [r for r in self.rows if query in r["text"]]
+        in_one_chat = ref is not None
         max_id = criteria.get("max_id") or 0
-        if max_id:
+        if max_id and in_one_chat:
             matches = [r for r in matches if r["id"] < max_id]
         limit = criteria.get("limit")
         page = list(reversed(matches))[:limit] if limit else list(reversed(matches))
-        in_one_chat = ref is not None
         return Batch(
-            rows=sorted(page, key=lambda r: r["id"]),
+            rows=sorted(page, key=lambda r: r["id"]) if in_one_chat else page,
             scanned=len(page),
             total=len(matches) if in_one_chat else None,
             total_is_exact=in_one_chat and not max_id,
+            cursor_supported=in_one_chat,
         )
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:

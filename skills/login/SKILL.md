@@ -65,12 +65,18 @@ Give the operator the `url` verbatim and tell them what to do with it: open it o
 device already signed in to Telegram, or scan it as a QR code from
 **Settings → Devices → Link Desktop Device**.
 
+Every payload carries a `written` timestamp, and the run overwrites any earlier
+outcome with `starting` before it does anything else — so a `state` older than the
+command you just ran is stale, not an answer.
+
 Then poll the same file every few seconds until `state` changes:
 
 - `authorized` → report `account.name` and `account.id`. Done; tools work in the next
   session.
 - `expired` → the link was never confirmed. Offer to start again from step 3.
 - `needs_password` → step 4.
+- `failed` → the login could not start or Telegram refused it; `hint` says why. It
+  reaches this file on every failure, so a run that dies still answers here.
 
 ## 4. Two-factor accounts
 

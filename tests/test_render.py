@@ -10,6 +10,7 @@ from telethon.tl.types import (
 )
 
 from telegram_plugin.render import TEXT_LIMIT, envelope, render_message, truncate
+from tests.telethon_doubles import document_message, geo_message, photo_message
 
 
 def _msg(**overrides):
@@ -41,11 +42,40 @@ def test_long_text_is_truncated_and_flagged():
 
 
 def test_media_is_described_but_never_carried():
-    media = SimpleNamespace(mime_type="application/pdf", file_name="doc.pdf", size=1234)
-    rendered = render_message(_msg(media=media))
+    rendered = render_message(document_message(7, name="doc.pdf", size=1234))
     assert rendered["media"] == {"type": "application/pdf", "file_name": "doc.pdf", "size": 1234}
     assert "bytes" not in rendered
     assert "content" not in rendered
+
+
+def test_media_metadata_is_read_off_the_document_not_the_wrapper():
+    """The wrapper carries none of it. A double that pretends otherwise hid this entirely:
+    every media block came back {type: "MessageMediaDocument", file_name: null, size: null}."""
+    from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
+
+    for wrapper in (MessageMediaDocument, MessageMediaPhoto):
+        for attribute in ("file_name", "mime_type", "size"):
+            assert not hasattr(wrapper, attribute), f"{wrapper.__name__}.{attribute}"
+
+    from telethon.tl.custom.message import Message
+
+    assert hasattr(Message, "file"), "telethon changed: Message.file is the resolver we use"
+
+
+def test_a_photo_is_described_and_sized():
+    assert render_message(photo_message(7, size=5000))["media"] == {
+        "type": "image/jpeg",
+        "file_name": None,
+        "size": 5000,
+    }
+
+
+def test_media_that_is_not_a_file_still_reports_its_type():
+    assert render_message(geo_message(7))["media"] == {
+        "type": "MessageMediaGeo",
+        "file_name": None,
+        "size": None,
+    }
 
 
 def test_message_without_media_has_no_media_key():
@@ -156,10 +186,24 @@ def test_an_empty_result_distinguishes_a_filter_from_an_empty_range():
     assert "nothing in this range" in empty["note"]
 
 
-def test_a_truncated_scan_says_so():
-    env = envelope([], has_more=False, next_cursor=None, scanned=20000, scan_truncated=True)
+def test_a_truncated_scan_says_so_and_still_offers_a_cursor():
+    """A stopped scan is not an exhausted range; saying "nothing left" here was the bug."""
+    env = envelope([], has_more=True, next_cursor=4711, scanned=20000, scan_truncated=True)
     assert "20000" in env["note"]
     assert "narrow the range" in env["note"]
+    assert env["has_more"] is True
+    assert env["next_cursor"] == 4711
+    assert "min_id=4711" in env["note"]
+    assert "nothing left in this range" not in env["note"]
+
+
+def test_an_envelope_without_a_cursor_says_what_to_do_instead():
+    env = envelope(
+        [{"id": 1}], has_more=True, next_cursor=None, no_cursor_hint="narrow it with chat=."
+    )
+    assert env["next_cursor"] is None
+    assert "narrow it with chat=." in env["note"]
+    assert "min_id=" not in env["note"]
 
 
 def test_display_names_are_truncated_like_message_text():
@@ -176,8 +220,8 @@ def test_a_sender_chosen_name_reaches_the_model_already_truncated():
 
 
 def test_attachment_names_are_sanitised_in_metadata_too():
-    media = SimpleNamespace(mime_type="application/pdf", file_name="; rm -rf ~ ;.pdf", size=1)
-    assert render_message(_msg(media=media))["media"]["file_name"] == "_rm_-rf_.pdf"
+    rendered = render_message(document_message(7, name="; rm -rf ~ ;.pdf"))
+    assert rendered["media"]["file_name"] == "_rm_-rf_.pdf"
 
 
 def test_a_sanitised_name_keeps_its_extension_and_never_empties():
