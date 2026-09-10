@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telegram-plugin"
-version = "0.4.1"
+version = "0.5.1"
 description = "MCP server exposing one personal Telegram account for reading, searching and downloading"
 readme = "README.md"
 license = { text = "MIT" }

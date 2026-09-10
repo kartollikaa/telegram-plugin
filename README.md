@@ -214,9 +214,16 @@ Two, both usable from inside a session:
 `media_only`; `search_messages` pages backwards on `max_id`, because search
 results arrive newest first. An empty result says whether the range was empty or
 the filters excluded everything in it — the two are not the same answer. Each message comes back with its id, an ISO date, the sender's id
-and display name, the text, a link to the message, and for attachments the type,
-file name and size — never the bytes. Bytes arrive only through
-`download_media`, one file per call.
+and display name, the text, a link to the message, for replies the message it
+answers, and for attachments the type, file name and size — never the bytes.
+Bytes arrive only through `download_media`, one file per call.
+
+A reply carries `reply_to`: `message_id`, a link to it, and `thread_id` for the
+forum topic or comment thread it sits in. Two cases would otherwise mislead. In
+a forum every message carries the header, so a post that answers nothing has a
+`thread_id` and a null `message_id` rather than a reply to its own topic root.
+And a reply can point into a different chat, where the link names that chat, or
+is null — never an id read as belonging to this one.
 
 ## Limits
 
