@@ -34,8 +34,12 @@ digest() {
 VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)
 WANTED=$(digest "$DEPS|$VERSION")
 
+# The floor is not cosmetic: before telethon 1.42 a sender-supplied file name could
+# carry an absolute path, so a download could be steered out of its directory. Checking
+# the version here is what makes that hold for TELEGRAM_PLUGIN_PYTHON too.
+MIN_TELETHON="1.42"
 has_dependencies() {
-    "$1" -c 'import telethon, mcp' >/dev/null 2>&1 3>&-
+    "$1" -c 'import re, sys, telethon, mcp; m = re.match(r"(\d+)\.(\d+)", telethon.__version__); sys.exit(0 if m and (int(m.group(1)), int(m.group(2))) >= (1, 42) else 1)' >/dev/null 2>&1 3>&-
 }
 
 refuse_to_delete_a_non_venv() {
@@ -70,7 +74,8 @@ install_into() {
 if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
     PYTHON=$TELEGRAM_PLUGIN_PYTHON
     if ! has_dependencies "$PYTHON"; then
-        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon and mcp." >&2
+        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon and mcp," >&2
+        echo "[telegram-plugin] or its telethon is older than $MIN_TELETHON." >&2
         echo "[telegram-plugin] Install them there:" >&2
         echo "[telegram-plugin]   $PYTHON -m pip install $DEPS" >&2
         echo "[telegram-plugin] or unset the variable and let the plugin build its own." >&2

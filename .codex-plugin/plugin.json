@@ -1,6 +1,6 @@
 {
   "name": "telegram",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Read your own Telegram account: dialogs, history, search and attachments. Sending is off unless TELEGRAM_PLUGIN_ALLOW_SEND=1.",
   "author": {
     "name": "Dmitrii Maksimov",

@@ -210,13 +210,17 @@ Two, both usable from inside a session:
 | `download_media(chat, message_id, dest_dir?)` | one attachment to disk, returns the path |
 | `send_message(chat, text)` | **only registered when `TELEGRAM_PLUGIN_ALLOW_SEND=1`** |
 
-`read_messages` accepts `min_id`, `max_id`, `since`, `until`, `from_user` and
-`media_only`; `search_messages` pages backwards on `max_id`, because search
-results arrive newest first. An empty result says whether the range was empty or
-the filters excluded everything in it — the two are not the same answer. Each message comes back with its id, an ISO date, the sender's id
-and display name, the text, a link to the message, for replies the message it
-answers, and for attachments the type, file name and size — never the bytes.
-Bytes arrive only through `download_media`, one file per call.
+`read_messages` accepts `min_id`, `max_id`, `since`, `until` (ISO 8601 dates or
+timestamps; without a zone they are read as UTC), `from_user` and `media_only`.
+A search **inside one chat** pages backwards on `max_id`, because results arrive
+newest first; a search **across all chats** has no id cursor at all — message ids
+are only ordered within one chat — so it says so and points you at `chat=` or
+`out_path`. An empty result says whether the range was empty or the filters
+excluded everything in it — the two are not the same answer. Each message comes
+back with its id, an ISO date, the sender's id and display name, the text, a link
+to the message, for replies the message it answers, and for attachments the mime
+type, file name and size — never the bytes. Bytes arrive only through
+`download_media`, one file per call.
 
 A reply carries `reply_to`: `message_id`, a link to it, and `thread_id` for the
 forum topic or comment thread it sits in. Two cases would otherwise mislead. In
@@ -237,7 +241,11 @@ do damage on a misread instruction.
 - **Wide ranges go to disk.** Pass `out_path` and the rows are written as JSONL;
   the reply is a path, a line count and an id range.
 - **Paging is by cursor.** Every read returns `next_cursor`; continue with
-  `min_id`.
+  `min_id`. `since`, `until` and `media_only` are applied here rather than by
+  Telegram, so a wide range is scanned in bounded steps: when the scan stops at
+  its ceiling the reply says so, keeps `has_more` true and hands back the cursor
+  to resume from. `out_path` exports carry `complete`, false when the file holds
+  only a prefix of the range.
 - **Writes are confined.** `out_path` and `dest_dir` must stay inside
   `TELEGRAM_OUTPUT_ROOT` (by default the state directory's `downloads/`), and an
   existing file is never overwritten silently.
@@ -264,14 +272,19 @@ do damage on a misread instruction.
 | `TELEGRAM_STATE_DIR` | session, `.env`, virtualenv, downloads | `~/.local/state/telegram-plugin` |
 | `TELEGRAM_SESSION_NAME` | session file basename | `telegram` |
 | `TELEGRAM_OUTPUT_ROOT` | where tools may write | `$TELEGRAM_STATE_DIR/downloads` |
-| `TELEGRAM_MAX_DOWNLOAD_BYTES` | refuse attachments above this | `104857600` (100 MiB) |
+| `TELEGRAM_MAX_DOWNLOAD_BYTES` | refuse attachments above this; `0` refuses every one | `104857600` (100 MiB) |
 | `TELEGRAM_PLUGIN_PYTHON` | interpreter override, skips the virtualenv | unset |
 | `TELEGRAM_PLUGIN_ALLOW_SEND` | `1` registers `send_message` | unset |
-| `TELEGRAM_PLUGIN_SEND_LIMIT` | messages one server process may send | `20` |
+| `TELEGRAM_PLUGIN_SEND_LIMIT` | messages one server process may send; `0` allows none | `20` |
 | `TELEGRAM_IDLE_TIMEOUT` | seconds of inactivity before the account is released | `60` |
 | `TELEGRAM_LOCK_WAIT` | seconds to wait for a session another process holds | `20` |
 
 The state directory is created `0700`, and `.env` and the session file `0600`.
+
+A variable exported in the environment always wins, **including when it is empty**:
+clearing one in the host's environment turns it off rather than falling back to
+whatever `.env` says. A numeric variable that cannot be read is ignored, and the
+startup line on stderr names it.
 
 ### Turning sending on
 

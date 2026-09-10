@@ -66,7 +66,8 @@ def test_the_login_skill_refuses_to_collect_secrets_in_conversation():
 def test_the_login_skill_covers_every_status_the_cli_can_report():
     from telegram_plugin.login import DEFAULT_QR_TIMEOUT  # noqa: F401
 
-    for state in ("credentials", "authorized", "session_in_use", "expired", "needs_password"):
+    for state in ("credentials", "authorized", "session_in_use", "expired", "needs_password",
+                  "failed"):
         assert state in LOGIN_SKILL_TEXT, state
 
 
@@ -90,3 +91,16 @@ def test_the_skill_directory_and_its_declared_name_agree():
         declared = re.search(r"^name: (.+)$", (directory / "SKILL.md").read_text(), re.MULTILINE)
         assert declared, directory.name
         assert declared[1].strip() == directory.name, directory.name
+
+
+def test_the_reading_skill_teaches_the_two_cursors_that_do_not_exist():
+    """A global search has no id cursor and a stopped scan is not an empty range: both
+    are places an agent will otherwise draw the wrong conclusion on its own."""
+    assert "no cursor" in READ_SKILL
+    assert "stopped scan is not an empty range" in READ_SKILL.lower()
+    assert "complete" in READ_SKILL
+
+
+def test_the_reading_skill_states_the_accepted_date_forms():
+    assert "ISO 8601" in READ_SKILL
+    assert "2026-01-31T09:00:00Z" in READ_SKILL

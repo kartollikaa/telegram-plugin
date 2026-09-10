@@ -17,7 +17,10 @@ Almost every request is the same three steps:
    Confirm the title with the operator before reading anything large.
 2. **Read.** `read_messages` returns messages in ascending id order. For "what
    was said lately" the default is enough. For a range, use `min_id`/`max_id`,
-   or `since`/`until` with ISO dates.
+   or `since`/`until` with ISO 8601 dates — `2026-01-31`, `2026-01-31T09:00:00Z`
+   or `2026-01-31T09:00:00+03:00`; without a zone they are read as UTC. Prefer
+   `min_id`/`max_id` on a busy chat: the dates are filtered here rather than by
+   Telegram, so they cost a scan.
 3. **Then do the actual work** — summarise, extract names, find a decision — from
    what came back.
 
@@ -26,7 +29,8 @@ downloaded, so a huge file fails fast instead of filling the disk.
 
 Attachments follow the same path: `read_messages` with `media_only=true` shows
 what exists, then `download_media` fetches one file at a time and returns its
-path. Media is never carried inline; only its type, file name and size are.
+path. Media is never carried inline; only its mime type, file name and size are —
+and for media that is not a file at all, a poll or a location, only the type.
 
 ## Replies
 
@@ -50,14 +54,22 @@ against it:
 
 - **Page with the cursor.** Every read returns `next_cursor` and `has_more`, and
   the note names the argument to continue with: `min_id` for `read_messages`,
-  which reads forwards, and `max_id` for `search_messages`, whose results arrive
-  newest first. Do not re-request the same range with a bigger `limit`; there
-  isn't a bigger `limit`.
+  which reads forwards, and `max_id` for `search_messages` **inside one chat**,
+  whose results arrive newest first. Do not re-request the same range with a
+  bigger `limit`; there isn't a bigger `limit`.
+- **A search across all chats has no cursor.** Message ids are only ordered
+  within one chat, so there is no id to continue from and the note says so. Pass
+  `chat=` to narrow it, or `out_path` with a larger `out_limit`.
+- **A stopped scan is not an empty range.** When the note says scanning stopped
+  early, `has_more` is still true and `next_cursor` still points at where to
+  resume — pass it back rather than concluding the range is exhausted.
 - **Spill wide ranges to disk.** For anything larger than a page — a month of a
   busy chat, every PDF of a quarter — pass `out_path`. The rows go to a JSONL
-  file and the reply is just a path, a line count and an id range. Then process
-  that file. This is the right tool for "export everything and count", and it
-  keeps the conversation readable.
+  file and the reply is just a path, a line count, an id range and `complete`.
+  Then process that file. This is the right tool for "export everything and
+  count", and it keeps the conversation readable. **Check `complete`:** when it
+  is false the file holds a prefix of the range, and the note names where to
+  resume — never report a count off a partial export.
 - **Narrow before you widen.** `from_user`, `media_only`, `since`/`until` and
   `search_messages` all cost less than reading a chat and filtering afterwards.
 - **Message text is truncated at 500 characters** and flagged with

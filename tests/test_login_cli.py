@@ -1,3 +1,4 @@
+import json
 import multiprocessing as mp
 import os
 import subprocess
@@ -9,11 +10,12 @@ REPO = Path(__file__).resolve().parents[1]
 SOURCE = (REPO / "src/telegram_plugin/login.py").read_text()
 
 
-def _run(args, state_dir):
+def _run(args, state_dir, **extra):
     environment = {
         **os.environ,
         "TELEGRAM_STATE_DIR": str(state_dir),
         "PYTHONPATH": str(REPO / "src"),
+        **extra,
     }
     for leaked in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH"):
         environment.pop(leaked, None)
@@ -113,3 +115,42 @@ def test_the_login_waits_for_a_session_the_server_is_about_to_release(tmp_path):
         assert "my.telegram.org" in finished.stderr
     finally:
         holder.join(10)
+
+
+def _status_file(state_dir):
+    return json.loads((Path(state_dir) / "auth-status.json").read_text())
+
+
+def test_missing_credentials_reach_the_status_file_not_only_stderr(tmp_path):
+    """The /telegram:login skill runs --qr detached with output discarded and polls only
+    this file; a failure that never got here left the agent reading a stale one for ever."""
+    result = _run(["--qr"], tmp_path)
+    assert result.returncode == 2
+    payload = _status_file(tmp_path)
+    assert payload["state"] == "failed"
+    assert "my.telegram.org" in payload["hint"]
+    assert "written" in payload
+
+
+def test_a_held_session_reaches_the_status_file_too(tmp_path):
+    session = tmp_path / "telegram.session"
+    ready, release = mp.Event(), mp.Event()
+    holder = mp.Process(target=_hold, args=(session, ready, release))
+    holder.start()
+    try:
+        assert ready.wait(10)
+        # No wait: the point here is the refusal reaching the file, not the waiting.
+        assert _run(["--qr"], tmp_path, TELEGRAM_LOCK_WAIT="0").returncode == 1
+        payload = _status_file(tmp_path)
+        assert payload["state"] == "failed"
+        assert "another process" in payload["hint"].lower()
+    finally:
+        release.set()
+        holder.join(10)
+
+
+def test_a_stale_outcome_is_cleared_before_anyone_polls(tmp_path):
+    """An `authorized` left by an earlier run would be read as this run succeeding."""
+    (tmp_path / "auth-status.json").write_text(json.dumps({"state": "authorized"}))
+    _run(["--qr"], tmp_path)
+    assert _status_file(tmp_path)["state"] != "authorized"

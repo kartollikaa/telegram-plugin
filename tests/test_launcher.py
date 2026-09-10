@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -117,8 +118,44 @@ def test_an_interpreter_without_the_dependencies_is_refused_not_worked_around(tm
     )
     assert result.returncode != 0
     assert "cannot import telethon and mcp" in result.stderr
+    assert "older than 1.42" in result.stderr
     assert "pip install" in result.stderr
     assert not (tmp_path / "venv").exists(), "it must not build a venv behind the override"
+
+
+def test_an_interpreter_with_too_old_a_telethon_is_refused(tmp_path):
+    """The path-confinement guarantee rests on telethon >= 1.42, and the override is a
+    documented way to hand the plugin any interpreter at all — importing is not enough."""
+    stubs = tmp_path / "stubs"
+    (stubs / "telethon").mkdir(parents=True)
+    (stubs / "telethon" / "__init__.py").write_text('__version__ = "1.30.0"\n')
+    (stubs / "mcp").mkdir()
+    (stubs / "mcp" / "__init__.py").write_text("")
+    interpreter = tmp_path / "python"
+    interpreter.write_text(f'#!/bin/sh\nPYTHONPATH="{stubs}" exec "{sys.executable}" "$@"\n')
+    interpreter.chmod(0o755)
+
+    # Positive control: this interpreter really does satisfy the old import-only check.
+    assert subprocess.run(
+        [str(interpreter), "-c", "import telethon, mcp; assert telethon.__version__ == '1.30.0'"],
+        check=False,
+    ).returncode == 0
+
+    result = subprocess.run(
+        [str(LAUNCHER)],
+        input=INITIALIZE,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "TELEGRAM_STATE_DIR": str(tmp_path / "state"),
+            "TELEGRAM_PLUGIN_PYTHON": str(interpreter),
+        },
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "older than 1.42" in result.stderr
 
 
 def test_it_refuses_to_delete_something_that_is_not_its_own_venv(tmp_path):

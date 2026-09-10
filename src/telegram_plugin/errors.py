@@ -51,6 +51,24 @@ class NotAMember(TelegramPluginError):
         )
 
 
+class BadMoment(TelegramPluginError):
+    def __init__(self, text: str) -> None:
+        super().__init__(
+            f"Cannot read {text!r} as a date. Use an ISO 8601 date or timestamp: 2026-01-31, "
+            "2026-01-31T09:00:00Z, or 2026-01-31T09:00:00+03:00. A timestamp without a zone "
+            "is read as UTC."
+        )
+
+
+class EscapedOutput(TelegramPluginError):
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"The download landed at {path}, outside the directory it was given. Nothing was "
+            "returned. This should be impossible with telethon>=1.42; check which interpreter "
+            "TELEGRAM_PLUGIN_PYTHON points at."
+        )
+
+
 class NoSuchMedia(TelegramPluginError):
     def __init__(self, message_id: int) -> None:
         super().__init__(f"Message {message_id} carries no downloadable media.")

@@ -112,7 +112,13 @@ Nothing secret lives in the repository; only `.env.example` does.
 
 Resolution order is **real environment first, then `$TELEGRAM_STATE_DIR/.env`,
 then defaults** — so a host that injects variables always wins over a file on
-disk. The state directory is created `0700` and the `.env` inside it `0600`.
+disk. *Exported and empty* counts as the host speaking: it selects the default,
+it does not fall through to the file, because clearing a variable is how a
+wrapper turns one off and reading that as "unset" once let `.env` switch sending
+back on. For the same reason a ceiling of `0` is the strictest setting rather
+than a missing one, and a value that is not a number at all is ignored with its
+name — never its value — on the startup line. The state directory is created
+`0700` and the `.env` inside it `0600`.
 
 ## Authorisation
 
@@ -205,9 +211,14 @@ otherwise would be a lie to the host. `send_message` is annotated as neither
 read-only nor idempotent.
 
 Each message carries: id, ISO date, sender id and display name, text, a link to
-the message, for a reply the message it answers, and for media the type, file
-name and size — never the bytes. Bytes come only from `download_media`, one file
-at a time, to a path the caller chose.
+the message, for a reply the message it answers, and for media the mime type,
+file name and size — never the bytes. Those three live on the document or photo,
+never on the `MessageMedia*` wrapper, so they are read through `Message.file`,
+Telethon's own resolver; reading them off the wrapper returned `null` for every
+attachment in the plugin's whole life, and three test doubles that put them on
+the wrapper agreed with each other that it worked. Media that is not a file at
+all — a poll, a location, a link preview — still reports its type. Bytes come
+only from `download_media`, one file at a time, to a path the caller chose.
 
 `reply_to` is what makes an answer readable at all: "declined", "done", "+1"
 mean nothing without the message they answer, and pairing them by order is
@@ -226,7 +237,10 @@ constraints are part of the contract, not advice:
 
 - **Ceilings live in the schema.** `limit` is validated `1..200` rather than
   merely defaulted, so an over-eager caller is corrected by the protocol instead
-  of being served eight thousand rows.
+  of being served eight thousand rows. `since` and `until` carry their accepted
+  spellings in the schema too: `fromisoformat` only learned the trailing `Z` in
+  3.11 and the floor here is 3.10, so the form a model reaches for first is
+  normalised before parsing rather than left to the interpreter.
 - **Message text is truncated** at 500 characters, with a flag on the message
   saying so. The full text of a specific message is still reachable by asking
   for that id.
@@ -241,6 +255,22 @@ constraints are part of the contract, not advice:
   note says so instead.
 - **Cursor pagination by id.** `next_cursor` is the last id returned; the caller
   continues with `min_id=next_cursor`. There is no "ask again, but bigger".
+- **A bounded scan still has to be resumable.** `since`, `until` and media
+  presence are filtered here rather than by Telegram, so a read walks the range
+  until the scan ceiling stops it. That ceiling is checked on *every* message,
+  including the ones the filters reject — checking it only after an accepted row
+  made it unreachable in exactly the case it exists for, and a filtered read
+  walked whole chats. When it does stop, the reply keeps `has_more` true and
+  returns the last id the scan *looked at*, not the last one it returned: the
+  filters may have accepted nothing, and there would then be no row to continue
+  from. An `out_path` export carries the same fact as `complete: false`, because
+  a partial file reported as four healthy numbers is the worst answer available.
+- **A global search has no cursor.** Message ids are ordered inside one chat and
+  nowhere else; Telethon skips its own id range filter when there is no entity,
+  and `searchGlobal` resumes on an offset rate and peer that no argument here
+  carries. Handing back a `max_id` taken from whichever chat happened to sort last
+  would silently drop every match above it elsewhere, so a global search keeps
+  Telegram's own newest-first order and says it has no cursor.
 - **`out_path` writes JSONL to disk** and returns only the path, the line count
   and the id range. This is the answer for "export a month of this chat": the
   data lands in a file the agent can then process, and the context window sees
@@ -269,7 +299,14 @@ Failures are returned as text a model can act on, not as stack traces:
 - session locked by another process → say which lock and what to do;
 - `FloodWaitError` → the wait in seconds, with an explicit instruction not to
   retry immediately, because retrying is what turns a short wait into a long one;
-- unknown chat reference → the forms that are accepted.
+- unknown chat reference → the forms that are accepted;
+- unreadable `since`/`until` → the spellings that work, not a `ValueError`.
+
+`bin/telegram-login` writes its outcome to `auth-status.json` on *every* path out,
+failures included, and stamps each payload with the time it was written. The
+`/telegram:login` skill starts the QR login detached and reads only that file, so
+an error that reached stderr alone reached nobody, and a stale payload from an
+earlier run read as the current state.
 
 ## Security posture
 
@@ -309,6 +346,10 @@ testing are ordinary functions:
   way Telethon documents it — an earlier double filtered server-side, which is
   exactly what hid a bug where `since` and `media_only` reported "nothing"
   while the matches sat one page further back;
+- the scan ceiling, with a filter the double actually applies. The test that
+  claimed to prove it used `from_user`, which the double ignored, so the loop
+  exited on `limit` after five messages and the assertion passed over a scan of
+  five;
 - rendering: truncation, the envelope, what the note says;
 - cursor arithmetic across pages;
 - configuration precedence, environment over file over default;
@@ -325,12 +366,16 @@ against a real account.
 
 One lesson is baked into the tests rather than left to discipline: a test double
 that diverges from the real contract hides exactly the bug it was written to
-catch. It happened twice here — a double that filtered server-side hid a filter
-applied to the wrong page, and a synchronous stub for `QRLogin.recreate` hid a
-missing `await`, so every retry waited on a dead token. Both were found by
-running against the real thing. There is now a test that asserts the double and
-Telethon agree on which calls are coroutines, and it fails if the double drifts
-back.
+catch. It has happened three times here — a double that filtered server-side hid
+a filter applied to the wrong page; a synchronous stub for `QRLogin.recreate` hid
+a missing `await`, so every retry waited on a dead token; and three separate
+doubles that hung `file_name`, `mime_type` and `size` off the media wrapper
+agreed with each other that attachment metadata worked, while every real message
+returned `null` for all three. Message doubles are now built from real Telethon
+types in `tests/telethon_doubles.py`, and there are tests asserting that the
+double and Telethon agree on which calls are coroutines, on where media metadata
+lives, and on a supergroup being both a group and a channel — each fails if the
+double drifts back.
 
 ## Prior art
 

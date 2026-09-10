@@ -23,6 +23,7 @@ from telethon.tl.functions.messages import CheckChatInviteRequest
 
 from telegram_plugin.config import Config
 from telegram_plugin.errors import (
+    EscapedOutput,
     MediaTooLarge,
     MissingCredentials,
     NoSuchMedia,
@@ -50,11 +51,27 @@ class Batch:
     total_is_exact: bool = False
     """`total` counts exactly the set this request ranged over.
 
-    Telegram's own total ignores id bounds — measured: 430 for a chat with and
-    without `min_id` — and knows nothing about filters applied here. So it is
-    only a remaining count when neither was in play; otherwise it is context,
+    Telegram's own total ignores id bounds and knows nothing about filters applied here,
+    so it is only a remaining count when neither was in play; otherwise it is context,
     and saying more would be inventing a number.
     """
+
+    last_scanned_id: int | None = None
+    """The id of the last message the scan looked at, accepted or not.
+
+    Everything up to it has been examined, so it — not the last row returned — is where a
+    scan that stopped at the cap must be resumed from.
+    """
+
+    cursor_supported: bool = True
+    """False for a global search: message ids are only ordered within one chat."""
+
+
+def _accepted(message: Any, date: Any, since: Any, media_only: bool) -> bool:
+    """The filters Telegram cannot apply for us, so `history` applies them per message."""
+    if since and date and date < since:
+        return False
+    return not (media_only and message.media is None)
 
 
 def _scan_cap(limit: int | None) -> int:
@@ -381,6 +398,7 @@ class TelethonGateway:
         rows: list[dict] = []
         scanned = 0
         truncated = False
+        last_scanned_id: int | None = None
         async for message in client.iter_messages(
             entity,
             limit=None,
@@ -390,16 +408,17 @@ class TelethonGateway:
             reverse=True,
         ):
             scanned += 1
+            last_scanned_id = message.id
             date = getattr(message, "date", None)
             if until and date and date > until:
                 break  # ascending order: nothing further can qualify
-            if since and date and date < since:
-                continue
-            if media_only and message.media is None:
-                continue
-            rows.append(self._render(message, username, internal))
-            if limit and len(rows) >= limit:
-                break
+            if _accepted(message, date, since, media_only):
+                rows.append(self._render(message, username, internal))
+                if limit and len(rows) >= limit:
+                    break
+            # Outside the branch on purpose: a filter that rejects everything is exactly
+            # when the cap has to bind, and checking it only after an accepted row let a
+            # `since` scan walk a whole 50 000-message chat.
             if scanned >= cap:
                 truncated = True
                 break
@@ -417,6 +436,7 @@ class TelethonGateway:
             rows=rows,
             scanned=scanned,
             scan_truncated=truncated,
+            last_scanned_id=last_scanned_id,
             total=total,
             total_is_exact=total is not None and not bounded,
         )
@@ -430,7 +450,14 @@ class TelethonGateway:
         return getattr(probe, "total", None)
 
     async def search(self, query: str, ref: ChatRef | None, **criteria: Any) -> Batch:
-        """Search results arrive newest first, so paging runs backwards on max_id."""
+        """In one chat, results arrive newest first and page backwards on max_id.
+
+        Globally they do not page by id at all: ids are per-chat, Telethon skips its own
+        id range filter when there is no entity, and searchGlobal resumes on an offset
+        rate and peer that no argument here can carry. So a global search keeps Telegram's
+        own newest-first order and says it has no cursor rather than handing back one that
+        would silently skip other chats.
+        """
         async with self._session() as client:
             return await self._run_search(client, query, ref, **criteria)
 
@@ -440,24 +467,27 @@ class TelethonGateway:
         entity = await self._entity(ref) if ref else None
         username = getattr(entity, "username", None) if entity else None
         internal = _internal_id(entity) if entity else None
+        in_one_chat = entity is not None
+        max_id = (criteria.get("max_id") or 0) if in_one_chat else 0
         rows: list[dict] = []
         scanned = 0
         async for message in client.iter_messages(
             entity,
             search=query,
             limit=criteria.get("limit"),
-            max_id=criteria.get("max_id") or 0,
+            max_id=max_id,
         ):
             scanned += 1
             rows.append(self._render(message, username, internal))
-        rows.sort(key=lambda row: row["id"])
+        if in_one_chat:
+            rows.sort(key=lambda row: row["id"])
         limit = criteria.get("limit")
-        # Only an in-chat search reports a count worth repeating. Measured on a
-        # live account: a global search claimed 59988 matches for "Telegram" and
-        # 29500 for "a", which cannot both be true — so globally there is no count.
+        # Only an in-chat search reports a count worth repeating: Telegram's global total
+        # is an estimate that has been observed claiming more matches for a rare word than
+        # for a near-universal substring.
         total = (
             await self._total(client, entity, search=query)
-            if entity is not None and limit and len(rows) >= limit
+            if in_one_chat and limit and len(rows) >= limit
             else None
         )
         return Batch(
@@ -465,6 +495,7 @@ class TelethonGateway:
             scanned=scanned,
             total=total,
             total_is_exact=total is not None and not criteria.get("max_id"),
+            cursor_supported=in_one_chat,
         )
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:
@@ -480,9 +511,9 @@ class TelethonGateway:
         if message is None or message.media is None:
             raise NoSuchMedia(message_id)
 
-        size = getattr(message.media, "size", None) or getattr(
-            getattr(message.media, "document", None), "size", None
-        )
+        # Same resolver as the rendered metadata, so the ceiling sees the size the agent
+        # was shown — including a photo's, which the media wrapper does not carry.
+        size = getattr(getattr(message, "file", None), "size", None)
         cap = self._config.max_download_bytes
         if isinstance(size, int) and size > cap:
             raise MediaTooLarge(size, cap)
@@ -491,7 +522,7 @@ class TelethonGateway:
         saved = await client.download_media(message, file=str(dest))
         if saved is None:
             raise NoSuchMedia(message_id)
-        return str(_with_safe_name(Path(saved)))
+        return str(_with_safe_name(Path(saved), dest))
 
     async def send(self, ref: ChatRef, text: str) -> dict:
         async with self._session() as client:
@@ -532,8 +563,9 @@ class TelethonGateway:
             lock.release()
 
 
-def _with_safe_name(saved: Path) -> Path:
+def _with_safe_name(saved: Path, dest: Path) -> Path:
     """A sender chooses the attachment's name; the agent may hand the path to a shell."""
+    _refuse_outside(saved, dest)
     cleaned = safe_name(saved.name)
     if cleaned == saved.name:
         return saved
@@ -554,15 +586,31 @@ def _internal_id(entity: Any) -> int | None:
     return int(text[4:]) if text.startswith("-100") else None
 
 
+def _refuse_outside(saved: Path, dest: Path) -> None:
+    """Telethon >= 1.42 strips a sender-supplied directory, but that must not be the only guard."""
+    try:
+        inside = saved.resolve().is_relative_to(dest.resolve())
+    except OSError:
+        inside = False
+    if not inside:
+        raise EscapedOutput(str(saved))
+
+
 def _dialog_type(dialog: Any) -> str:
-    if dialog.is_channel:
-        return "channel"
+    # A supergroup is both, so `is_group` has to be asked first or every modern group
+    # chat comes back labelled "channel".
     if dialog.is_group:
         return "group"
+    if dialog.is_channel:
+        return "channel"
     return "user"
 
 
 def _entity_type(entity: Any) -> str:
+    # `megagroup` is the same question `Dialog.is_group` asks, so the two tools agree.
+    # A gigagroup is not one: Telegram made it act like a channel and Telethon counts it as one.
+    if getattr(entity, "megagroup", False):
+        return "group"
     name = type(entity).__name__.lower()
     if "channel" in name:
         return "channel"
