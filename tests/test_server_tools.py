@@ -7,6 +7,128 @@ from telegram_plugin.server import ALL_TOOLS, READ_TOOLS, build_server
 from tests.fakes import FakeGateway
 
 
+def _nullable(title, value_type):
+    return {
+        "anyOf": [{"type": value_type}, {"type": "null"}],
+        "default": None,
+        "title": title,
+    }
+
+
+def _schema(name, properties, required=()):
+    result = {"properties": properties, "title": f"{name}Arguments", "type": "object"}
+    if required:
+        result["required"] = list(required)
+    return result
+
+
+LOOKING = {"openWorldHint": True, "readOnlyHint": True}
+SAVING = {"destructiveHint": False, "openWorldHint": True, "readOnlyHint": False}
+SENDING = {
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": True,
+    "readOnlyHint": False,
+}
+LIMIT = {"default": 50, "maximum": 200, "minimum": 1, "title": "Limit", "type": "integer"}
+OUT_LIMIT = {
+    "default": 1000,
+    "maximum": 5000,
+    "minimum": 1,
+    "title": "Out Limit",
+    "type": "integer",
+}
+FROZEN_MCP_CONTRACT = {
+    "whoami": {
+        "description": "Which Telegram account this session belongs to.",
+        "input_schema": _schema("whoami", {}),
+        "annotations": LOOKING,
+    },
+    "list_dialogs": {
+        "description": "Your chats, optionally filtered by title.",
+        "input_schema": _schema(
+            "list_dialogs",
+            {"query": _nullable("Query", "string"), "limit": LIMIT},
+        ),
+        "annotations": LOOKING,
+    },
+    "resolve_chat": {
+        "description": "Identify a chat from a t.me link, @name or numeric id. Never joins the chat.",
+        "input_schema": _schema(
+            "resolve_chat", {"ref": {"title": "Ref", "type": "string"}}, ("ref",)
+        ),
+        "annotations": LOOKING,
+    },
+    "read_messages": {
+        "description": (
+            "Messages in ascending id order. Returns an envelope with a next_cursor; "
+            "pass out_path to write a wide range to JSONL instead."
+        ),
+        "input_schema": _schema(
+            "read_messages",
+            {
+                "chat": {"title": "Chat", "type": "string"},
+                "limit": LIMIT,
+                "min_id": _nullable("Min Id", "integer"),
+                "max_id": _nullable("Max Id", "integer"),
+                "since": _nullable("Since", "string"),
+                "until": _nullable("Until", "string"),
+                "from_user": _nullable("From User", "string"),
+                "media_only": {"default": False, "title": "Media Only", "type": "boolean"},
+                "out_path": _nullable("Out Path", "string"),
+                "out_limit": OUT_LIMIT,
+            },
+            ("chat",),
+        ),
+        "annotations": LOOKING,
+    },
+    "search_messages": {
+        "description": "Full-text search, in one chat or across all of them.",
+        "input_schema": _schema(
+            "search_messages",
+            {
+                "query": {"title": "Query", "type": "string"},
+                "chat": _nullable("Chat", "string"),
+                "limit": LIMIT,
+                "max_id": _nullable("Max Id", "integer"),
+                "out_path": _nullable("Out Path", "string"),
+                "out_limit": OUT_LIMIT,
+            },
+            ("query",),
+        ),
+        "annotations": LOOKING,
+    },
+    "download_media": {
+        "description": "Download one message's attachment and return its path.",
+        "input_schema": _schema(
+            "download_media",
+            {
+                "chat": {"title": "Chat", "type": "string"},
+                "message_id": {"title": "Message Id", "type": "integer"},
+                "dest_dir": _nullable("Dest Dir", "string"),
+            },
+            ("chat", "message_id"),
+        ),
+        "annotations": SAVING,
+    },
+    "send_message": {
+        "description": (
+            "Send a text message. Only ever because the operator asked in their own session. "
+            "The result names the resolved recipient, so a wrong one is visible."
+        ),
+        "input_schema": _schema(
+            "send_message",
+            {
+                "chat": {"title": "Chat", "type": "string"},
+                "text": {"title": "Text", "type": "string"},
+            },
+            ("chat", "text"),
+        ),
+        "annotations": SENDING,
+    },
+}
+
+
 def _server(allow_send=False, **env):
     environment = {"HOME": "/tmp", **env}
     if allow_send:
@@ -37,6 +159,25 @@ async def test_tool_surface_is_exactly_the_seven():
         "search_messages",
         "download_media",
         "send_message",
+    }
+
+
+async def test_tool_contract_is_unchanged_after_application_extraction():
+    def normalized(tool):
+        return {
+            "description": tool.description,
+            "input_schema": tool.input_schema,
+            "annotations": tool.annotations.model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            ),
+        }
+
+    enabled = {tool.name: normalized(tool) for tool in await _server(True).list_tools()}
+    disabled = {tool.name: normalized(tool) for tool in await _server().list_tools()}
+
+    assert enabled == FROZEN_MCP_CONTRACT
+    assert disabled == {
+        name: contract for name, contract in FROZEN_MCP_CONTRACT.items() if name != "send_message"
     }
 
 

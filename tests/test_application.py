@@ -1,0 +1,160 @@
+import json
+
+import pytest
+
+from telegram_plugin.application import TelegramApplication
+from telegram_plugin.config import load_config
+from telegram_plugin.errors import NotAuthorized, UnsafePath
+from tests.fakes import FakeGateway
+
+
+def _application(tmp_path, gateway=None, **environment):
+    config = load_config(
+        {
+            "HOME": str(tmp_path),
+            "TELEGRAM_OUTPUT_ROOT": str(tmp_path / "output"),
+            **environment,
+        }
+    )
+    return TelegramApplication(config, gateway or FakeGateway())
+
+
+def _message(message_id, *, media=False):
+    result = {
+        "id": message_id,
+        "date": f"2026-01-01T00:{message_id:02}:00+00:00",
+        "sender_id": 100 + (message_id % 3),
+        "sender_name": f"Sender {message_id % 3}",
+        "text": f"message {message_id}",
+        "text_truncated": False,
+        "link": f"https://t.me/somechannel/{message_id}",
+    }
+    if media:
+        result["media"] = {
+            "type": "application/pdf",
+            "file_name": f"{message_id}.pdf",
+            "size": 1024,
+        }
+    return result
+
+
+async def test_whoami_and_resolve_return_gateway_payloads(tmp_path):
+    application = _application(tmp_path)
+
+    assert await application.whoami() == {
+        "id": 42,
+        "name": "Test Account",
+        "username": "tester",
+        "is_bot": False,
+    }
+    assert await application.resolve("@alpha") == {
+        "id": -1001,
+        "title": "Alpha",
+        "type": "channel",
+        "username": "alpha",
+    }
+
+
+@pytest.mark.parametrize("operation", ["dialogs", "read", "search", "download", "send"])
+async def test_existing_operation_payload_parity(tmp_path, operation):
+    application = _application(tmp_path, TELEGRAM_PLUGIN_SEND_LIMIT="2")
+
+    if operation == "dialogs":
+        actual = await application.dialogs(query="alp", limit=10)
+        expected = {
+            "items": [
+                {
+                    "id": -1001,
+                    "title": "Alpha",
+                    "type": "channel",
+                    "username": "alpha",
+                    "unread": 0,
+                }
+            ],
+            "returned": 1,
+            "note": "1 chats shown (limit 10). Narrow with query= if the one you want is missing.",
+        }
+    elif operation == "read":
+        actual = await application.read(chat="@alpha", limit=2)
+        expected = {
+            "items": [_message(1), _message(2)],
+            "returned": 2,
+            "has_more": True,
+            "next_cursor": 2,
+            "remaining": 10,
+            "note": (
+                "2 returned, 10 more available — continue with min_id=2, or pass out_path "
+                "to write the whole range to a JSONL file instead of into this conversation."
+            ),
+        }
+    elif operation == "search":
+        actual = await application.search(query="message", limit=3)
+        expected = {
+            "items": [_message(10), _message(11), _message(12, media=True)],
+            "returned": 3,
+            "has_more": True,
+            "next_cursor": 10,
+            "note": (
+                "3 returned, more available (the count in this range is not known without "
+                "scanning it) — continue with max_id=10, or pass out_path to write the whole "
+                "range to a JSONL file instead of into this conversation."
+            ),
+        }
+    elif operation == "download":
+        actual = await application.download(
+            chat="@alpha", message_id=4, dest_dir="attachments"
+        )
+        expected = {"path": str(tmp_path / "output" / "attachments" / "4.pdf")}
+    else:
+        actual = await application.send(chat="@alpha", text="hello")
+        expected = {
+            "id": 999,
+            "chat_id": -1001,
+            "chat_title": "Alpha",
+            "sent_so_far": 1,
+            "send_limit": 2,
+        }
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize("operation", ["read", "search"])
+async def test_wide_reads_return_jsonl_metadata(tmp_path, operation):
+    application = _application(tmp_path)
+
+    if operation == "read":
+        result = await application.read(chat="@alpha", out_path="exports/messages.jsonl")
+    else:
+        result = await application.search(query="message", out_path="exports/messages.jsonl")
+
+    target = tmp_path / "output" / "exports" / "messages.jsonl"
+    assert result == {
+        "path": str(target),
+        "lines": 12,
+        "first_id": 1,
+        "last_id": 12,
+    }
+    assert [json.loads(line)["id"] for line in target.read_text().splitlines()] == list(
+        range(1, 13)
+    )
+
+
+async def test_send_keeps_the_existing_process_counter(tmp_path):
+    application = _application(tmp_path, TELEGRAM_PLUGIN_SEND_LIMIT="2")
+
+    first = await application.send(chat="@alpha", text="hello")
+    second = await application.send(chat="@alpha", text="again")
+
+    assert first["sent_so_far"] == 1
+    assert second["sent_so_far"] == 2
+    assert second["send_limit"] == 2
+
+
+async def test_domain_errors_propagate_to_transport(tmp_path):
+    unauthorized = _application(tmp_path, FakeGateway(authorized=False))
+    confined = _application(tmp_path)
+
+    with pytest.raises(NotAuthorized):
+        await unauthorized.whoami()
+    with pytest.raises(UnsafePath):
+        await confined.read(chat="@alpha", out_path="../escape.jsonl")

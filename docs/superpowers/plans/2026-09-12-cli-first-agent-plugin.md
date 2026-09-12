@@ -74,7 +74,7 @@ Run these steps after focused tests are green and before the task commit:
 - Produces: `TelegramApplication(config: Config, gateway: TelegramGateway)` with async methods `whoami`, `dialogs`, `resolve`, `read`, `search`, `download`, and `send`.
 - Preserves: MCP tool names, schemas, annotations, conditional send registration, and returned dictionaries.
 
-- [ ] **Step 1: Freeze representative MCP results before moving code**
+- [x] **Step 1: Freeze representative MCP results before moving code**
 
 Add tests in `tests/test_application.py` that construct `Config`, `FakeGateway`, and the not-yet-created `TelegramApplication`. Cover dialog envelopes, forward history cursors, backward search cursors, JSONL metadata, download confinement, and exception propagation.
 
@@ -89,13 +89,13 @@ async def test_read_keeps_forward_cursor_contract(config, rows):
     assert result["cursor_field"] == "min_id"
 ```
 
-- [ ] **Step 2: Run the focused test and verify the red state**
+- [x] **Step 2: Run the focused test and verify the red state**
 
 Run: `./.venv/bin/python -m pytest tests/test_application.py -q`
 
 Expected: collection fails with `ModuleNotFoundError: No module named 'telegram_plugin.application'`.
 
-- [ ] **Step 3: Create `TelegramApplication` and move the operation logic**
+- [x] **Step 3: Create `TelegramApplication` and move the operation logic**
 
 Use one class with stored config and gateway. Keep defaults and keyword names identical to the MCP schema so the adapter remains mechanical.
 
@@ -125,7 +125,7 @@ class TelegramApplication:
 
 Move `_read_messages`, `_search_messages`, `_download_media`, `_forward_envelope`, `_backward_envelope`, `_remaining`, and `_moment` into this module as methods or private helpers without changing their algorithms.
 
-- [ ] **Step 4: Turn `server.py` into a transport adapter**
+- [x] **Step 4: Turn `server.py` into a transport adapter**
 
 Construct one application instance inside `build_server` and delegate every tool body to it through the existing `_guarded` error conversion. Keep the existing MCP-only `sent_so_far` counter until Task 4.
 
@@ -137,17 +137,17 @@ async def list_dialogs(query: str | None = None, limit: Limit = DEFAULT_ITEMS) -
     return await _guarded(application.dialogs(query=query, limit=limit))
 ```
 
-- [ ] **Step 5: Run application and MCP parity tests**
+- [x] **Step 5: Run application and MCP parity tests**
 
 Run: `./.venv/bin/python -m pytest tests/test_application.py tests/test_server_tools.py tests/test_history_filters.py tests/test_paging.py tests/test_jsonl.py -q`
 
 Expected: all pass; existing MCP assertions remain unchanged.
 
-- [ ] **Step 6: Execute the task review gate**
+- [x] **Step 6: Execute the task review gate**
 
 Apply the global review gate to the Task 1 diff and acceptance criteria mapped to S1. Include the before/after MCP tool list and one concrete history envelope in the evidence.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```bash
 git add src/telegram_plugin/application.py src/telegram_plugin/server.py tests/test_application.py tests/test_server_tools.py
