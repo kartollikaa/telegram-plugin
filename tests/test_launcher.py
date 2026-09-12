@@ -9,6 +9,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 LAUNCHER = REPO / "bin" / "telegram-mcp"
+CLI_LAUNCHER = REPO / "bin" / "telegram"
 
 INITIALIZE = (
     json.dumps(
@@ -39,6 +40,63 @@ def _run(state_dir: Path) -> subprocess.CompletedProcess:
         timeout=600,
         check=False,
     )
+
+
+def _run_cli(state_dir: Path, *arguments: str) -> subprocess.CompletedProcess:
+    environment = {**os.environ, "TELEGRAM_STATE_DIR": str(state_dir)}
+    environment.pop("TELEGRAM_PLUGIN_PYTHON", None)
+    return subprocess.run(
+        [str(CLI_LAUNCHER), *arguments],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=600,
+        check=False,
+    )
+
+
+def test_cli_launcher_bootstraps_once_without_stdout_noise(tmp_path):
+    before = _worktree_state()
+
+    first = _run_cli(tmp_path, "--help")
+    second = _run_cli(tmp_path, "--help")
+
+    assert first.returncode == 0
+    assert first.stdout.startswith("usage: telegram")
+    assert "installing dependencies" not in first.stdout.lower()
+    assert "installing dependencies" in first.stderr.lower()
+    assert second.returncode == 0
+    assert "installing dependencies" not in second.stderr.lower()
+    assert (tmp_path / "venv" / "bin" / "python").exists()
+    assert _worktree_state() == before
+
+
+def test_cli_launcher_keeps_all_bootstrap_output_off_stdout(tmp_path):
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3"
+    fake_python.write_text("#!/bin/sh\necho bootstrap-marker\nexit 1\n")
+    fake_python.chmod(0o755)
+    state = tmp_path / "state"
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "TELEGRAM_STATE_DIR": str(state),
+    }
+    environment.pop("TELEGRAM_PLUGIN_PYTHON", None)
+
+    result = subprocess.run(
+        [str(CLI_LAUNCHER), "--help"],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "bootstrap-marker" in result.stderr
 
 
 def _worktree_state() -> str:

@@ -24,6 +24,7 @@ from telethon.tl.functions.messages import CheckChatInviteRequest
 from telegram_plugin.config import Config
 from telegram_plugin.errors import (
     MediaTooLarge,
+    MessageNotFound,
     MissingCredentials,
     NoSuchMedia,
     NotAMember,
@@ -72,9 +73,15 @@ class TelegramGateway(Protocol):
 
     async def search(self, query: str, ref: ChatRef | None, **criteria: Any) -> Batch: ...
 
+    async def message(self, ref: ChatRef, message_id: int) -> dict: ...
+
+    async def thread(self, ref: ChatRef, root_message_id: int, limit: int) -> Batch: ...
+
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str: ...
 
     async def send(self, ref: ChatRef, text: str) -> dict: ...
+
+    async def close(self) -> None: ...
 
 
 def ensure_state_dir(config: Config) -> None:
@@ -467,6 +474,35 @@ class TelethonGateway:
             total_is_exact=total is not None and not criteria.get("max_id"),
         )
 
+    async def message(self, ref: ChatRef, message_id: int) -> dict:
+        async with self._session() as client:
+            entity = await self._entity(ref)
+            message = await client.get_messages(entity, ids=message_id)
+            if message is None:
+                raise MessageNotFound(message_id)
+            return self._render(
+                message,
+                getattr(entity, "username", None),
+                _internal_id(entity),
+            )
+
+    async def thread(self, ref: ChatRef, root_message_id: int, limit: int) -> Batch:
+        async with self._session() as client:
+            entity = await self._entity(ref)
+            username = getattr(entity, "username", None)
+            internal = _internal_id(entity)
+            rows = [
+                self._render(message, username, internal)
+                async for message in client.iter_messages(
+                    entity,
+                    reply_to=root_message_id,
+                    limit=limit,
+                    reverse=True,
+                )
+            ]
+        rows.sort(key=lambda row: row["id"])
+        return Batch(rows=rows, scanned=len(rows))
+
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:
         async with self._session() as client:
             return await self._fetch_media(client, ref, message_id, dest)
@@ -526,10 +562,12 @@ class TelethonGateway:
 
         if watcher is not None and watcher is not asyncio.current_task():
             watcher.cancel()
-        if client is not None:
-            await client.disconnect()
-        if lock is not None:
-            lock.release()
+        try:
+            if client is not None:
+                await client.disconnect()
+        finally:
+            if lock is not None:
+                lock.release()
 
 
 def _with_safe_name(saved: Path) -> Path:

@@ -177,7 +177,7 @@ git commit -m "Выделяем application layer Telegram"
 - Produces: `build_parser()`, `dispatch(arguments, application)`, async `_run(arguments, environment, gateway_factory)`, and `main(argv=None, environment=None, gateway_factory=TelethonGateway) -> int`.
 - Extends `TelegramGateway` with `message(ref, message_id) -> dict` and `thread(ref, root_message_id, limit) -> Batch`.
 
-- [ ] **Step 1: Write failing gateway tests for exact messages and threads**
+- [x] **Step 1: Write failing gateway tests for exact messages and threads**
 
 Use contract-faithful fakes: exact lookup returns one rendered message or raises `MessageNotFound`; thread returns replies in ascending id order and excludes unrelated replies.
 
@@ -190,13 +190,13 @@ async def test_fake_thread_returns_only_root_replies(rows):
     assert all(row["reply_to"]["thread_id"] == 10 for row in batch.rows)
 ```
 
-- [ ] **Step 2: Run gateway tests and confirm missing-interface failures**
+- [x] **Step 2: Run gateway tests and confirm missing-interface failures**
 
 Run: `./.venv/bin/python -m pytest tests/test_gateway_messages.py -q`
 
 Expected: failures report missing `message` and `thread` methods.
 
-- [ ] **Step 3: Implement exact-message and thread gateway operations**
+- [x] **Step 3: Implement exact-message and thread gateway operations**
 
 Add the two protocol methods, implement exact retrieval with Telethon's id lookup, render through the existing `_render`, and implement thread iteration using `reply_to=root_message_id`. Raise a dedicated `MessageNotFound(message_id)` rather than returning an empty object.
 
@@ -211,7 +211,7 @@ async def message(self, ref: ChatRef, message_id: int) -> dict:
         return self._render(message, username, internal)
 ```
 
-- [ ] **Step 4: Write failing CLI contract tests**
+- [x] **Step 4: Write failing CLI contract tests**
 
 Test every read command, compact UTF-8 JSON plus newline, no stderr on normal success, JSON error on stdout with exit `1`, argparse usage on stderr with exit `2`, and gateway closure for success and failure.
 
@@ -224,13 +224,13 @@ def test_domain_error_is_one_json_object_on_stdout(capsys, fake_gateway):
     assert captured.err == ""
 ```
 
-- [ ] **Step 5: Run CLI tests and verify the red state**
+- [x] **Step 5: Run CLI tests and verify the red state**
 
 Run: `./.venv/bin/python -m pytest tests/test_cli.py -q`
 
 Expected: collection fails because `telegram_plugin.cli` does not exist.
 
-- [ ] **Step 6: Implement parser, dispatch, error serialization, and cleanup**
+- [x] **Step 6: Implement parser, dispatch, error serialization, and cleanup**
 
 Create subparsers for `whoami`, `dialogs`, `resolve`, `message`, `thread`, `read`, `search`, and `download`. Convert ISO arguments in the application layer. Catch argparse separately from domain/runtime exceptions, serialize errors with stable codes, and always close the gateway.
 
@@ -245,21 +245,21 @@ async def _run(arguments, environment, gateway_factory=TelethonGateway) -> dict:
         await gateway.close()
 ```
 
-- [ ] **Step 7: Add the universal launcher and setup parity**
+- [x] **Step 7: Add the universal launcher and setup parity**
 
 Copy the proven state-directory venv, install lock, dependency stamp, interpreter override, and stderr-only bootstrap behavior from `bin/telegram-mcp`. Replace the final module with `telegram_plugin.cli`; do not change the MCP launcher yet. Update `scripts/setup.sh` to prewarm through `bin/telegram --help` without touching Telegram.
 
-- [ ] **Step 8: Run the focused Task 2 suite**
+- [x] **Step 8: Run the focused Task 2 suite**
 
 Run: `./.venv/bin/python -m pytest tests/test_cli.py tests/test_gateway_messages.py tests/test_launcher.py tests/test_application.py tests/test_session_lifecycle.py tests/test_session_lock.py -q`
 
 Expected: all pass, including explicit close assertions on every exit path.
 
-- [ ] **Step 9: Execute the task review gate**
+- [x] **Step 9: Execute the task review gate**
 
 Apply the global gate to Task 2. Add a launcher positive control that deliberately points at a nonexistent module and proves the launcher test fails before restoring the correct module.
 
-- [ ] **Step 10: Commit Task 2**
+- [x] **Step 10: Commit Task 2**
 
 ```bash
 git add bin/telegram scripts/setup.sh src/telegram_plugin/application.py src/telegram_plugin/cli.py src/telegram_plugin/client.py src/telegram_plugin/errors.py tests/fakes.py tests/test_application.py tests/test_cli.py tests/test_gateway_messages.py tests/test_launcher.py

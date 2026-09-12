@@ -28,10 +28,8 @@ def test_config_summary_omits_the_api_hash():
     assert "state" in summary.lower()
 
 
-# log.py is the server's only writer; login.py is a separate CLI whose job is to
-# talk to a human. Every other module runs inside the MCP process, where a stray
-# write to stdout corrupts the protocol framing.
-STREAM_EXEMPT = {"log.py", "login.py"}
+# Transport entry points own their streams; every shared module remains stream-free.
+STREAM_EXEMPT = {"log.py", "login.py", "cli.py"}
 
 
 def _server_path_modules():

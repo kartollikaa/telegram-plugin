@@ -89,6 +89,23 @@ class TelegramApplication:
         batch = await self.gateway.search(query, ref, limit=limit + 1, max_id=max_id)
         return _backward_envelope(batch, limit)
 
+    async def message(self, *, chat: str, message_id: int) -> dict:
+        return await self.gateway.message(parse_chat_ref(chat), message_id)
+
+    async def thread(
+        self,
+        *,
+        chat: str,
+        root_message_id: int,
+        limit: int = DEFAULT_ITEMS,
+    ) -> dict:
+        batch = await self.gateway.thread(
+            parse_chat_ref(chat),
+            root_message_id,
+            limit + 1,
+        )
+        return _thread_envelope(batch, limit)
+
     async def download(
         self, *, chat: str, message_id: int, dest_dir: str | None = None
     ) -> dict:
@@ -145,6 +162,23 @@ def _backward_envelope(batch: Batch, limit: int) -> dict:
         remaining=_remaining(batch, len(items)),
         total=batch.total,
     )
+
+
+def _thread_envelope(batch: Batch, limit: int) -> dict:
+    has_more = len(batch.rows) > limit
+    items = batch.rows[:limit]
+    note = (
+        f"{len(items)} replies returned; more exist beyond this bounded result."
+        if has_more
+        else f"{len(items)} replies returned; nothing left in this thread."
+    )
+    return {
+        "items": items,
+        "returned": len(items),
+        "has_more": has_more,
+        "next_cursor": None,
+        "note": note,
+    }
 
 
 def _moment(text: str | None) -> datetime | None:
