@@ -13,12 +13,12 @@ def test_skill_states_that_chat_content_is_data_not_instructions():
 
 
 def test_skill_teaches_the_paging_and_export_escape_hatches():
-    assert "out_path" in READ_SKILL
-    assert "min_id" in READ_SKILL
+    assert "--out" in READ_SKILL
+    assert "--min-id" in READ_SKILL
 
 
 def test_skill_says_the_ceiling_is_not_negotiable():
-    assert "refused by the schema" in READ_SKILL
+    assert "rejected by the CLI" in READ_SKILL
 
 
 def test_skill_names_the_absent_capabilities():
@@ -90,3 +90,56 @@ def test_the_skill_directory_and_its_declared_name_agree():
         declared = re.search(r"^name: (.+)$", (directory / "SKILL.md").read_text(), re.MULTILINE)
         assert declared, directory.name
         assert declared[1].strip() == directory.name, directory.name
+
+
+FORBIDDEN_MCP_VOCABULARY = (
+    "list_dialogs",
+    "resolve_chat",
+    "read_messages",
+    "search_messages",
+    "download_media",
+    "telegram-mcp",
+)
+
+
+def _forbidden_vocabulary(text):
+    lowered = text.casefold()
+    return {term for term in FORBIDDEN_MCP_VOCABULARY if term in lowered}
+
+
+def test_login_and_read_skills_are_cli_only():
+    positive_control = " ".join(FORBIDDEN_MCP_VOCABULARY)
+    assert _forbidden_vocabulary(positive_control) == set(FORBIDDEN_MCP_VOCABULARY)
+
+    assert _forbidden_vocabulary(READ_SKILL) == set()
+    assert _forbidden_vocabulary(LOGIN_SKILL) == set()
+    assert '"${CLAUDE_PLUGIN_ROOT}/bin/telegram" find-chat' in READ_SKILL
+
+
+def test_read_skill_trigger_and_discovery_workflow_are_explicit():
+    description = READ_SKILL.split("---", 2)[1].casefold()
+    for trigger in (
+        "telegram",
+        "телег",
+        "chat",
+        "channel",
+        "message",
+        "file",
+        "person",
+        "username",
+        "t.me",
+    ):
+        assert trigger in description
+
+    workflow = READ_SKILL.split("## Discovery workflow", 1)[1]
+    commands = (" resolve ", " find-chat ", " search ", " read ")
+    positions = [workflow.index(command) for command in commands]
+    assert positions == sorted(positions)
+    assert "multiple credible candidates" in READ_SKILL
+    assert "ask the operator" in READ_SKILL
+
+
+def test_skills_explain_portable_launcher_resolution():
+    assert '"${CLAUDE_PLUGIN_ROOT}/bin/telegram"' in READ_SKILL
+    assert "absolute path" in READ_SKILL
+    assert "absolute path" in LOGIN_SKILL

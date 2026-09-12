@@ -38,6 +38,7 @@ def test_help_lists_the_read_command_surface(capsys, tmp_path):
     for command in (
         "whoami",
         "dialogs",
+        "find-chat",
         "resolve",
         "message",
         "thread",
@@ -116,6 +117,7 @@ def test_all_read_commands_dispatch(capsys, tmp_path):
     gateway.rows[7]["reply_to"] = {"message_id": 10, "link": None, "thread_id": 10}
     commands = [
         (["dialogs", "--query", "alp", "--limit", "1"], lambda value: value["items"][0]["id"] == -1001),
+        (["find-chat", "alp", "--limit", "1"], lambda value: value["items"][0]["id"] == -1001),
         (["resolve", "@alpha"], lambda value: value["username"] == "alpha"),
         (["message", "@alpha", "4"], lambda value: value["id"] == 4),
         (["thread", "@alpha", "10", "--limit", "1"], lambda value: value["items"][0]["id"] == 3),
@@ -141,6 +143,23 @@ def test_all_read_commands_dispatch(capsys, tmp_path):
     assert thread_payload["has_more"] is True
     assert thread_payload["next_cursor"] is None
     assert "bounded result" in thread_payload["note"]
+
+
+@pytest.mark.parametrize(
+    ("argv", "diagnostic"),
+    [
+        (["find-chat", ""], "query must not be empty"),
+        (["find-chat", "@"], "query must not be empty"),
+        (["find-chat", "alpha", "--limit", "51"], "between 1 and 50"),
+    ],
+)
+def test_find_chat_rejects_invalid_usage(capsys, tmp_path, argv, diagnostic):
+    code, captured, gateway = _invoke(capsys, tmp_path, argv)
+
+    assert code == 2
+    assert captured.out == ""
+    assert diagnostic in captured.err
+    assert gateway.close_calls == 0
 
 
 def test_parser_help_does_not_import_telethon():

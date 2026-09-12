@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from telegram_plugin.client import Batch, TelegramGateway
+from telegram_plugin.client import DIALOG_SCAN_CAP, Batch, TelegramGateway
 from telegram_plugin.config import Config
 from telegram_plugin.errors import SendLimitReached
 from telegram_plugin.jsonl import write_jsonl
+from telegram_plugin.matching import rank_dialogs
 from telegram_plugin.paging import paginate
 from telegram_plugin.paths import safe_output_dir, safe_output_path
 from telegram_plugin.refs import parse_chat_ref
@@ -38,6 +39,25 @@ class TelegramApplication:
 
     async def resolve(self, ref: str) -> dict:
         return await self.gateway.resolve(parse_chat_ref(ref))
+
+    async def find_chat(self, query: str, limit: int = 10) -> dict:
+        batch = await self.gateway.dialogs(None, DIALOG_SCAN_CAP)
+        items = rank_dialogs(batch.rows, query, limit)
+        boundary = (
+            "scanning stopped at the bounded cap"
+            if batch.scan_truncated
+            else "the bounded dialog scan completed"
+        )
+        return {
+            "items": items,
+            "returned": len(items),
+            "scanned": batch.scanned,
+            "scan_truncated": batch.scan_truncated,
+            "note": (
+                f"{len(items)} candidate chats found from {batch.scanned} scanned; {boundary}. "
+                "Compare score and matched_by, then read a small sample before choosing."
+            ),
+        }
 
     async def read(
         self,

@@ -3,6 +3,7 @@ import json
 import pytest
 
 from telegram_plugin.application import TelegramApplication
+from telegram_plugin.client import DIALOG_SCAN_CAP, Batch
 from telegram_plugin.config import load_config
 from telegram_plugin.errors import NotAuthorized, UnsafePath
 from tests.fakes import FakeGateway
@@ -158,3 +159,48 @@ async def test_domain_errors_propagate_to_transport(tmp_path):
         await unauthorized.whoami()
     with pytest.raises(UnsafePath):
         await confined.read(chat="@alpha", out_path="../escape.jsonl")
+
+
+async def test_find_chat_preserves_ambiguous_candidates(tmp_path):
+    class AmbiguousGateway(FakeGateway):
+        async def dialogs(self, query, limit):
+            assert query is None
+            assert limit == DIALOG_SCAN_CAP
+            return Batch(
+                rows=[
+                    {
+                        "id": -1002,
+                        "title": "Mobile Release Archive",
+                        "type": "channel",
+                        "username": "mobile_release_archive",
+                        "unread": 0,
+                    },
+                    {
+                        "id": -1001,
+                        "title": "Mobile Release",
+                        "type": "channel",
+                        "username": "mobile_release",
+                        "unread": 2,
+                    },
+                ],
+                scanned=137,
+                scan_truncated=True,
+            )
+
+    result = await _application(tmp_path, AmbiguousGateway()).find_chat(
+        "mobile release",
+        limit=10,
+    )
+
+    assert [row["id"] for row in result["items"]] == [-1001, -1002]
+    assert all({"score", "matched_by"} <= row.keys() for row in result["items"])
+    assert result == {
+        "items": result["items"],
+        "returned": 2,
+        "scanned": 137,
+        "scan_truncated": True,
+        "note": (
+            "2 candidate chats found from 137 scanned; scanning stopped at the bounded cap. "
+            "Compare score and matched_by, then read a small sample before choosing."
+        ),
+    }

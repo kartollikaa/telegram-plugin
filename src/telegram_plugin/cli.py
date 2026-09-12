@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import TelegramPluginError, describe
+from telegram_plugin.matching import normalize_dialog_text
 from telegram_plugin.render import DEFAULT_ITEMS, MAX_ITEMS
 
 if TYPE_CHECKING:
@@ -38,6 +39,13 @@ def _bounded_integer(maximum: int):
 limit_value = _bounded_integer(MAX_ITEMS)
 export_limit_value = _bounded_integer(EXPORT_LIMIT)
 positive_integer = _bounded_integer(2**63 - 1)
+discovery_limit = _bounded_integer(50)
+
+
+def _discovery_query(raw: str) -> str:
+    if not normalize_dialog_text(raw):
+        raise argparse.ArgumentTypeError("query must not be empty")
+    return raw
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     dialogs = commands.add_parser("dialogs", help="list chats, optionally filtered by title")
     dialogs.add_argument("--query")
     dialogs.add_argument("--limit", type=limit_value, default=DEFAULT_ITEMS)
+
+    find_chat = commands.add_parser("find-chat", help="find chats by remembered metadata")
+    find_chat.add_argument("query", type=_discovery_query)
+    find_chat.add_argument("--limit", type=discovery_limit, default=10)
 
     resolve = commands.add_parser("resolve", help="resolve an exact chat reference")
     resolve.add_argument("chat")
@@ -109,6 +121,8 @@ async def dispatch(arguments: argparse.Namespace, application: TelegramApplicati
         return await application.whoami()
     if command == "dialogs":
         return await application.dialogs(query=arguments.query, limit=arguments.limit)
+    if command == "find-chat":
+        return await application.find_chat(arguments.query, limit=arguments.limit)
     if command == "resolve":
         return await application.resolve(arguments.chat)
     if command == "message":

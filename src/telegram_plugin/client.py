@@ -347,10 +347,10 @@ class TelethonGateway:
                     "unread": dialog.unread_count,
                 }
             )
-            if len(found) >= limit:
-                break
             if scanned >= DIALOG_SCAN_CAP:
                 truncated = True
+                break
+            if len(found) >= limit:
                 break
         return Batch(rows=found, scanned=scanned, scan_truncated=truncated)
 

@@ -287,7 +287,7 @@ git commit -m "Добавляем Telegram CLI для чтения"
 - Produces: `rank_dialogs(dialogs: Iterable[dict], query: str, limit: int) -> list[dict]` and `TelegramApplication.find_chat(query, limit=10) -> dict`.
 - Returns each candidate with original dialog fields plus integer `score` and string `matched_by`.
 
-- [ ] **Step 1: Write failing normalization and ranking tests**
+- [x] **Step 1: Write failing normalization and ranking tests**
 
 Cover Unicode normalization, case folding, leading `@`, exact username, title prefix, substring, unordered tokens, one typo, deterministic ties, minimum score, and output limit.
 
@@ -305,25 +305,25 @@ def test_username_fragment_beats_title_typo():
     assert ranked[0]["matched_by"] == "username_prefix"
 ```
 
-- [ ] **Step 2: Run matching tests and verify missing-module failure**
+- [x] **Step 2: Run matching tests and verify missing-module failure**
 
 Run: `./.venv/bin/python -m pytest tests/test_matching.py -q`
 
 Expected: collection fails because `telegram_plugin.matching` does not exist.
 
-- [ ] **Step 3: Implement deterministic ranking without a new dependency**
+- [x] **Step 3: Implement deterministic ranking without a new dependency**
 
 Normalize with `unicodedata.normalize("NFKC", value).casefold()`, strip an initial `@`, convert punctuation to spaces, and collapse whitespace. Score the best of title and username by category: exact `100`, prefix `90`, substring `80`, all tokens `70`, and `SequenceMatcher` typo similarity from `40` through `69` only when ratio is at least `0.60`. Sort by descending score, then casefolded title, then numeric id.
 
-- [ ] **Step 4: Add application and CLI `find-chat`**
+- [x] **Step 4: Add application and CLI `find-chat`**
 
 Fetch at most `DIALOG_SCAN_CAP` dialog rows without a title filter, rank them, and return a bounded envelope with the gateway's scan metadata. `find-chat` accepts a non-empty query and `--limit` in `1..50`.
 
-- [ ] **Step 5: Rewrite read and login skills around CLI workflows**
+- [x] **Step 5: Rewrite read and login skills around CLI workflows**
 
 Make the read description explicitly trigger on Telegram, телега, chats, channels, messages, files, remembered people/chat names, and `t.me`. Document exact resolve → find-chat → global-search → sample-read → disambiguate order. Use `"${CLAUDE_PLUGIN_ROOT}/bin/telegram"` for Claude and explain direct absolute launcher use for generic hosts. Remove MCP tool names and instructions. Update login text so a busy session no longer refers to an MCP server.
 
-- [ ] **Step 6: Pressure-test skill behavior and add the forbidden-vocabulary guard**
+- [x] **Step 6: Pressure-test skill behavior and add the forbidden-vocabulary guard**
 
 Use `superpowers:writing-skills` with fresh agents to pressure-test at least these prompts: `что
 писал Дима в телеге`, `найди канал про релиз`, a partial username, a remembered phrase without a
@@ -332,17 +332,17 @@ global search, bounded read, or disambiguation as the scenario requires. Separat
 positive-control guard proving that real skill files contain no `list_dialogs`, `resolve_chat`,
 `read_messages`, `search_messages`, `download_media`, or `telegram-mcp`.
 
-- [ ] **Step 7: Run the focused Task 3 suite**
+- [x] **Step 7: Run the focused Task 3 suite**
 
 Run: `./.venv/bin/python -m pytest tests/test_matching.py tests/test_cli.py tests/test_application.py tests/test_skills.py tests/test_docs.py -q`
 
 Expected: all pass and the candidate order is deterministic across repeated runs.
 
-- [ ] **Step 8: Execute the task review gate**
+- [x] **Step 8: Execute the task review gate**
 
 Apply the global gate. For the “no MCP vocabulary in skills” claim, first run the matcher against a fixture containing every forbidden term, then run it against real skills and inspect one concrete skill command.
 
-- [ ] **Step 9: Commit Task 3**
+- [x] **Step 9: Commit Task 3**
 
 ```bash
 git add src/telegram_plugin/application.py src/telegram_plugin/cli.py src/telegram_plugin/matching.py skills/login/SKILL.md skills/read/SKILL.md tests/test_application.py tests/test_cli.py tests/test_docs.py tests/test_matching.py tests/test_skills.py
