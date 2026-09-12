@@ -302,19 +302,18 @@ async def test_sending_names_the_resolved_recipient():
             "send_message", {"chat": "@somechannel", "text": "hello"}
         )
     )
+    assert result["message_id"] == 999
     assert result["chat_id"] == -1001
     assert result["chat_title"] == "Alpha"
-    assert result["sent_so_far"] == 1
+    assert result["reply_to"] is None
 
 
-async def test_sending_is_capped_per_process():
-    server = _server(allow_send=True, TELEGRAM_PLUGIN_SEND_LIMIT="2")
-    for _ in range(2):
+async def test_sending_has_no_fake_per_process_quota():
+    server = _server(allow_send=True)
+    for _ in range(3):
         assert "error" not in _payload(
             await server.call_tool("send_message", {"chat": "@somechannel", "text": "hi"})
         )
-    refused = _payload(await server.call_tool("send_message", {"chat": "@somechannel", "text": "hi"}))
-    assert "ceiling" in refused["error"]
 
 
 async def test_dialogs_says_when_nothing_matched_rather_than_looking_empty():

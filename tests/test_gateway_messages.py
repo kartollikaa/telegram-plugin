@@ -40,6 +40,7 @@ class MessageClient:
         self.thread_rows = [_telegram_message(14, root_id=10), _telegram_message(11, root_id=10)]
         self.message_ids = []
         self.thread_calls = []
+        self.send_calls = []
 
     async def get_messages(self, entity, *, ids):
         self.message_ids.append(ids)
@@ -54,6 +55,10 @@ class MessageClient:
         )
         for message in ordered[: criteria["limit"]]:
             yield message
+
+    async def send_message(self, entity, text, *, reply_to):
+        self.send_calls.append({"entity": entity, "text": text, "reply_to": reply_to})
+        return SimpleNamespace(id=81)
 
 
 def _telethon_gateway(tmp_path, client):
@@ -118,3 +123,25 @@ async def test_telethon_thread_uses_reply_filter_and_sorts_ascending(tmp_path):
     assert client.thread_calls == [{"reply_to": 10, "limit": 2, "reverse": True}]
     assert [row["id"] for row in batch.rows] == [11, 14]
     assert batch.scanned == 2
+
+
+@pytest.mark.parametrize("reply_to", [None, 42])
+async def test_telethon_send_forwards_reply_and_returns_actual_fields(tmp_path, reply_to):
+    client = MessageClient()
+    gateway = _telethon_gateway(tmp_path, client)
+
+    result = await gateway.send(REF, "hello; $(not shell)", reply_to=reply_to)
+
+    assert client.send_calls == [
+        {
+            "entity": client.send_calls[0]["entity"],
+            "text": "hello; $(not shell)",
+            "reply_to": reply_to,
+        }
+    ]
+    assert result == {
+        "message_id": 81,
+        "chat_id": 1,
+        "chat_title": "Alpha",
+        "reply_to": reply_to,
+    }

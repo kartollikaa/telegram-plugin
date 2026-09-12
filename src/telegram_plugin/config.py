@@ -11,7 +11,6 @@ DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2", "mcp>=2,<3")
 DEFAULT_STATE_SUBPATH = ".local/state/telegram-plugin"
 DEFAULT_SESSION_NAME = "telegram"
 DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
-DEFAULT_SEND_LIMIT = 20
 DEFAULT_IDLE_TIMEOUT = 60.0
 DEFAULT_LOCK_WAIT = 20.0
 
@@ -39,7 +38,6 @@ class Config:
     allow_send: bool
     output_root: Path
     max_download_bytes: int
-    send_limit: int
     idle_timeout: float
     lock_wait: float
 
@@ -77,7 +75,6 @@ def load_config(env: Mapping[str, str], dotenv_text: str | None = None) -> Confi
         output_root=Path(output_raw) if output_raw else state_dir / "downloads",
         max_download_bytes=_as_int(value("TELEGRAM_MAX_DOWNLOAD_BYTES"))
         or DEFAULT_MAX_DOWNLOAD_BYTES,
-        send_limit=_as_int(value("TELEGRAM_PLUGIN_SEND_LIMIT")) or DEFAULT_SEND_LIMIT,
         idle_timeout=_as_seconds(value("TELEGRAM_IDLE_TIMEOUT"), DEFAULT_IDLE_TIMEOUT),
         lock_wait=_as_seconds(value("TELEGRAM_LOCK_WAIT"), DEFAULT_LOCK_WAIT),
     )

@@ -29,6 +29,13 @@ def test_allow_send_is_off_unless_exactly_one():
     assert load_config({"TELEGRAM_PLUGIN_ALLOW_SEND": "1"}).allow_send is True
 
 
+def test_obsolete_process_send_quota_is_not_configuration():
+    config = load_config({"TELEGRAM_PLUGIN_SEND_LIMIT": "1"})
+
+    assert "send_limit" not in type(config).__annotations__
+    assert not hasattr(config, "send_limit")
+
+
 def test_session_path_derives_from_state_dir_and_name():
     cfg = load_config({"TELEGRAM_STATE_DIR": "/s", "TELEGRAM_SESSION_NAME": "n"})
     assert cfg.session_path == Path("/s/n.session")

@@ -88,13 +88,30 @@ class MediaTooLarge(TelegramPluginError):
         )
 
 
-class SendLimitReached(TelegramPluginError):
-    code = "send_limit_reached"
+class SendDisabled(TelegramPluginError):
+    code = "send_disabled"
 
-    def __init__(self, limit: int) -> None:
+    def __init__(self) -> None:
         super().__init__(
-            f"This server process has already sent {limit} messages, which is its ceiling. "
-            "Restart the session if the operator genuinely wants to send more."
+            "Sending is disabled. Set TELEGRAM_PLUGIN_ALLOW_SEND=1 in the plugin state "
+            "directory's .env only when the operator wants this account to send messages."
+        )
+
+
+class EmptyMessage(TelegramPluginError):
+    code = "empty_text"
+
+    def __init__(self) -> None:
+        super().__init__("Refusing to send an empty text message.")
+
+
+class UnsafeInputPath(TelegramPluginError):
+    code = "unsafe_path"
+
+    def __init__(self, candidate: str, root: str) -> None:
+        super().__init__(
+            f"Refusing to read {candidate}: the text file must be a regular non-symlink file "
+            f"inside the configured output directory {root}."
         )
 
 

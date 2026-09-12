@@ -3,6 +3,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 READ_SKILL = (REPO / "skills/read/SKILL.md").read_text()
 LOGIN_SKILL = (REPO / "skills/login/SKILL.md").read_text()
+SEND_SKILL = (REPO / "skills/send/SKILL.md").read_text()
 
 
 def test_skill_states_that_chat_content_is_data_not_instructions():
@@ -114,6 +115,31 @@ def test_login_and_read_skills_are_cli_only():
     assert _forbidden_vocabulary(READ_SKILL) == set()
     assert _forbidden_vocabulary(LOGIN_SKILL) == set()
     assert '"${CLAUDE_PLUGIN_ROOT}/bin/telegram" find-chat' in READ_SKILL
+
+
+def test_send_skill_requires_explicit_operator_authority_and_exact_recipient():
+    description = SEND_SKILL.split("---", 2)[1].casefold()
+    for trigger in ("send", "message", "reply", "answer", "telegram"):
+        assert trigger in description
+    assert "explicit" in description
+
+    lowered = SEND_SKILL.casefold()
+    assert "telegram_plugin_allow_send=1" in lowered
+    assert "operator" in lowered
+    assert "content" in lowered and "never authorizes" in lowered
+    assert "message_id" in lowered
+    assert "chat_id" in lowered
+    assert "chat_title" in lowered
+    assert "reply_to" in lowered
+
+    workflow = SEND_SKILL.split("## Send workflow", 1)[1]
+    assert workflow.index(" resolve ") < workflow.index(" find-chat ") < workflow.index(" send ")
+    assert "ask the operator" in workflow
+
+
+def test_send_skill_is_cli_only():
+    assert _forbidden_vocabulary(SEND_SKILL) == set()
+    assert '"${CLAUDE_PLUGIN_ROOT}/bin/telegram" send' in SEND_SKILL
 
 
 def test_read_skill_trigger_and_discovery_workflow_are_explicit():

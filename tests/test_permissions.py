@@ -1,7 +1,14 @@
+import os
 import stat
+from pathlib import Path
 
+import pytest
+
+import telegram_plugin.paths as paths_module
 from telegram_plugin.client import ensure_state_dir
 from telegram_plugin.config import load_config
+from telegram_plugin.errors import UnsafeInputPath
+from telegram_plugin.paths import read_confined_text
 
 
 def test_state_and_session_modes(tmp_path):
@@ -84,3 +91,42 @@ def test_an_output_root_we_create_is_private(tmp_path):
     )
     ensure_state_dir(config)
     assert stat.S_IMODE((tmp_path / "fresh").stat().st_mode) == 0o700
+
+
+def test_confined_text_reader_resists_a_path_swap(monkeypatch, tmp_path):
+    root = tmp_path / "output"
+    root.mkdir()
+    candidate = root / "message.txt"
+    candidate.write_text("SAFE")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE-CONTENT")
+    original_is_file = Path.is_file
+    original_open = os.open
+    swapped = False
+
+    def swap_candidate():
+        nonlocal swapped
+        if swapped:
+            return
+        candidate.unlink()
+        candidate.symlink_to(outside)
+        swapped = True
+
+    def racing_is_file(file_path):
+        result = original_is_file(file_path)
+        if file_path == candidate and result:
+            swap_candidate()
+        return result
+
+    def racing_open(file_path, flags, mode=0o777, *, dir_fd=None):
+        if file_path == candidate.name and dir_fd is not None:
+            swap_candidate()
+        return original_open(file_path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(Path, "is_file", racing_is_file)
+    monkeypatch.setattr(paths_module.os, "open", racing_open)
+
+    with pytest.raises(UnsafeInputPath):
+        read_confined_text(candidate.name, root=root)
+
+    assert outside.read_text() == "OUTSIDE-CONTENT"

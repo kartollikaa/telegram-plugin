@@ -79,7 +79,12 @@ class TelegramGateway(Protocol):
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str: ...
 
-    async def send(self, ref: ChatRef, text: str) -> dict: ...
+    async def send(
+        self,
+        ref: ChatRef,
+        text: str,
+        reply_to: int | None = None,
+    ) -> dict: ...
 
     async def close(self) -> None: ...
 
@@ -529,14 +534,20 @@ class TelethonGateway:
             raise NoSuchMedia(message_id)
         return str(_with_safe_name(Path(saved)))
 
-    async def send(self, ref: ChatRef, text: str) -> dict:
+    async def send(
+        self,
+        ref: ChatRef,
+        text: str,
+        reply_to: int | None = None,
+    ) -> dict:
         async with self._session() as client:
             entity = await self._entity(ref)
-            sent = await client.send_message(entity, text)
+            sent = await client.send_message(entity, text, reply_to=reply_to)
         return {
-            "id": sent.id,
+            "message_id": sent.id,
             "chat_id": utils.get_peer_id(entity),
             "chat_title": label(utils.get_display_name(entity)),
+            "reply_to": reply_to,
         }
 
     def _render(self, message: Any, username: str | None, internal: int | None) -> dict:

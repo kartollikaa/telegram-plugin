@@ -31,7 +31,7 @@ class FakeGateway:
     def __init__(self, *, authorized: bool = True, message_count: int = 12) -> None:
         self._authorized = authorized
         self.rows = [_row(i, media=i % 4 == 0) for i in range(1, message_count + 1)]
-        self.sent: list[tuple[str, str]] = []
+        self.sent: list[tuple[str, str, int | None]] = []
         self.close_calls = 0
 
     def _check(self) -> None:
@@ -130,10 +130,20 @@ class FakeGateway:
         target.write_bytes(b"%PDF-1.4 fake")
         return str(target)
 
-    async def send(self, ref: ChatRef, text: str) -> dict:
+    async def send(
+        self,
+        ref: ChatRef,
+        text: str,
+        reply_to: int | None = None,
+    ) -> dict:
         self._check()
-        self.sent.append((str(ref.value), text))
-        return {"id": 999, "chat_id": -1001, "chat_title": "Alpha"}
+        self.sent.append((str(ref.value), text, reply_to))
+        return {
+            "message_id": 999,
+            "chat_id": -1001,
+            "chat_title": "Alpha",
+            "reply_to": reply_to,
+        }
 
     async def close(self) -> None:
         self.close_calls += 1

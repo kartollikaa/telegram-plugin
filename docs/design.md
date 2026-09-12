@@ -36,9 +36,11 @@ code. Skills and the launcher are shared; only the manifests differ.
 .codex-plugin/plugin.json    Codex manifest
 .cursor-plugin/plugin.json   Cursor manifest
 bin/telegram-mcp             universal launcher — any MCP host can call this
+bin/telegram                 machine-readable CLI for local agents
 bin/telegram-login           interactive login, run by a human in a terminal
 skills/read/SKILL.md         /telegram:read — the flows, and the output-hygiene rules
 skills/login/SKILL.md        /telegram:login — drives a login to completion
+skills/send/SKILL.md         /telegram:send — explicit send/reply safeguards
 src/telegram_plugin/         the server and its core
 tests/                       pytest, no network
 ```
@@ -100,7 +102,6 @@ Nothing secret lives in the repository; only `.env.example` does.
 | `TELEGRAM_SESSION_NAME` | session file basename | `telegram` |
 | `TELEGRAM_OUTPUT_ROOT` | the only directory tools may write into | `$TELEGRAM_STATE_DIR/downloads` |
 | `TELEGRAM_MAX_DOWNLOAD_BYTES` | attachment ceiling, checked before downloading | 100 MiB |
-| `TELEGRAM_PLUGIN_SEND_LIMIT` | messages one server process may send | 20 |
 | `TELEGRAM_PLUGIN_PYTHON` | interpreter override | unset |
 | `TELEGRAM_PLUGIN_ALLOW_SEND` | `1` registers `send_message` | unset |
 
@@ -267,9 +268,8 @@ Failures are returned as text a model can act on, not as stack traces:
 
 ## Security posture
 
-Sending, when enabled, is narrowed by a per-process cap and by echoing the
-resolved recipient's id and title back in the result, so a wrong recipient is
-visible after the fact. That is worth having and it is not a boundary: what
+Sending, when enabled, is narrowed to one message per CLI invocation and echoes the
+resolved recipient and message id in the result. That is useful evidence, not a boundary: what
 actually stops a manipulated agent from sending is the instruction below, which
 sits in the same context window as the attacker's text. `TELEGRAM_PLUGIN_ALLOW_SEND=1`
 should be read as moving the plugin from "cannot send" to "can send, and is

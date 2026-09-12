@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from telegram_plugin.client import DIALOG_SCAN_CAP, Batch, TelegramGateway
 from telegram_plugin.config import Config
-from telegram_plugin.errors import SendLimitReached
+from telegram_plugin.errors import EmptyMessage, SendDisabled
 from telegram_plugin.jsonl import write_jsonl
 from telegram_plugin.matching import rank_dialogs
 from telegram_plugin.paging import paginate
@@ -19,7 +19,6 @@ class TelegramApplication:
     def __init__(self, config: Config, gateway: TelegramGateway) -> None:
         self.config = config
         self.gateway = gateway
-        self._sent_so_far = 0
 
     async def whoami(self) -> dict:
         return await self.gateway.me()
@@ -136,16 +135,21 @@ class TelegramApplication:
         )
         return {"path": await self.gateway.download(ref, message_id, destination)}
 
-    async def send(self, *, chat: str, text: str) -> dict:
-        if self._sent_so_far >= self.config.send_limit:
-            raise SendLimitReached(self.config.send_limit)
-        result = await self.gateway.send(parse_chat_ref(chat), text)
-        self._sent_so_far += 1
-        return {
-            **result,
-            "sent_so_far": self._sent_so_far,
-            "send_limit": self.config.send_limit,
-        }
+    def require_send_enabled(self) -> None:
+        if not self.config.allow_send:
+            raise SendDisabled()
+
+    async def send(
+        self,
+        *,
+        chat: str,
+        text: str,
+        reply_to: int | None = None,
+    ) -> dict:
+        self.require_send_enabled()
+        if not text.strip():
+            raise EmptyMessage()
+        return await self.gateway.send(parse_chat_ref(chat), text, reply_to=reply_to)
 
 
 def _forward_envelope(batch: Batch, limit: int) -> dict:

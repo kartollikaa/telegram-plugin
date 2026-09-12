@@ -19,11 +19,13 @@ def _environment(tmp_path):
     }
 
 
-def _invoke(capsys, tmp_path, argv, gateway=None):
+def _invoke(capsys, tmp_path, argv, gateway=None, environment=None):
     selected = gateway or FakeGateway()
+    selected_environment = _environment(tmp_path)
+    selected_environment.update(environment or {})
     code = main(
         argv,
-        environment=_environment(tmp_path),
+        environment=selected_environment,
         gateway_factory=lambda _config: selected,
     )
     captured = capsys.readouterr()
@@ -45,6 +47,7 @@ def test_help_lists_the_read_command_surface(capsys, tmp_path):
         "read",
         "search",
         "download",
+        "send",
     ):
         assert command in captured.out
 
@@ -269,3 +272,137 @@ def test_gateway_is_closed_on_every_exit_path(capsys, tmp_path, outcome):
 
     assert code == (0 if outcome == "success" else 1)
     assert gateway.close_calls == 1
+
+
+def test_send_is_disabled_before_gateway_access(capsys, tmp_path):
+    gateway = FakeGateway()
+
+    code, captured, _ = _invoke(
+        capsys,
+        tmp_path,
+        ["send", "not a ref!", "--text", "hello"],
+        gateway,
+    )
+
+    assert code == 1
+    assert json.loads(captured.out)["error"]["code"] == "send_disabled"
+    assert captured.err == ""
+    assert gateway.sent == []
+
+
+@pytest.mark.parametrize("reply_to", [None, 42])
+def test_send_dispatches_exactly_one_message(capsys, tmp_path, reply_to):
+    gateway = FakeGateway()
+    argv = ["send", "@alpha", "--text", "hello; $(not shell)"]
+    if reply_to is not None:
+        argv.extend(["--reply-to", str(reply_to)])
+
+    code, captured, _ = _invoke(
+        capsys,
+        tmp_path,
+        argv,
+        gateway,
+        {"TELEGRAM_PLUGIN_ALLOW_SEND": "1"},
+    )
+
+    assert code == 0
+    assert captured.err == ""
+    assert gateway.sent == [("alpha", "hello; $(not shell)", reply_to)]
+    assert json.loads(captured.out) == {
+        "message_id": 999,
+        "chat_id": -1001,
+        "chat_title": "Alpha",
+        "reply_to": reply_to,
+    }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["send", "@alpha"],
+        ["send", "@alpha", "--text", "hello", "--text-file", "message.txt"],
+    ],
+)
+def test_send_text_sources_are_mutually_exclusive(capsys, tmp_path, argv):
+    code, captured, gateway = _invoke(capsys, tmp_path, argv)
+
+    assert code == 2
+    assert captured.out == ""
+    assert "one of the arguments --text --text-file is required" in captured.err or (
+        "not allowed with argument" in captured.err
+    )
+    assert gateway.sent == []
+
+
+@pytest.mark.parametrize("text", ["", "  \n\t"])
+def test_empty_inline_send_text_is_rejected(capsys, tmp_path, text):
+    gateway = FakeGateway()
+
+    code, captured, _ = _invoke(
+        capsys,
+        tmp_path,
+        ["send", "@alpha", "--text", text],
+        gateway,
+        {"TELEGRAM_PLUGIN_ALLOW_SEND": "1"},
+    )
+
+    assert code == 1
+    assert json.loads(captured.out)["error"]["code"] == "empty_text"
+    assert gateway.sent == []
+
+
+def test_send_reads_a_confined_text_file_as_data(capsys, tmp_path):
+    root = tmp_path / "output"
+    root.mkdir()
+    text_file = root / "message.txt"
+    text = "line one\n$(touch should-not-run)\n"
+    text_file.write_text(text)
+    gateway = FakeGateway()
+
+    code, captured, _ = _invoke(
+        capsys,
+        tmp_path,
+        ["send", "@alpha", "--text-file", "message.txt"],
+        gateway,
+        {"TELEGRAM_PLUGIN_ALLOW_SEND": "1"},
+    )
+
+    assert code == 0
+    assert json.loads(captured.out)["message_id"] == 999
+    assert gateway.sent == [("alpha", text, None)]
+
+
+@pytest.mark.parametrize("kind", ["outside", "symlink", "directory", "empty"])
+def test_send_text_file_validation_precedes_gateway_access(capsys, tmp_path, kind):
+    root = tmp_path / "output"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret")
+    if kind == "outside":
+        candidate = str(outside)
+    elif kind == "symlink":
+        candidate_path = root / "message.txt"
+        candidate_path.symlink_to(outside)
+        candidate = "message.txt"
+    elif kind == "directory":
+        candidate_path = root / "message"
+        candidate_path.mkdir()
+        candidate = "message"
+    else:
+        candidate_path = root / "message.txt"
+        candidate_path.write_text("")
+        candidate = "message.txt"
+    gateway = FakeGateway()
+
+    code, captured, _ = _invoke(
+        capsys,
+        tmp_path,
+        ["send", "@alpha", "--text-file", candidate],
+        gateway,
+        {"TELEGRAM_PLUGIN_ALLOW_SEND": "1"},
+    )
+
+    assert code == 1
+    expected = "empty_text" if kind == "empty" else "unsafe_path"
+    assert json.loads(captured.out)["error"]["code"] == expected
+    assert gateway.sent == []

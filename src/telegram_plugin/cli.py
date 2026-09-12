@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import TelegramPluginError, describe
 from telegram_plugin.matching import normalize_dialog_text
+from telegram_plugin.paths import read_confined_text
 from telegram_plugin.render import DEFAULT_ITEMS, MAX_ITEMS
 
 if TYPE_CHECKING:
@@ -100,6 +101,13 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("message_id", type=positive_integer)
     download.add_argument("--dest-dir", dest="dest_dir")
 
+    send = commands.add_parser("send", help="send one explicit text message or reply")
+    send.add_argument("chat")
+    text_source = send.add_mutually_exclusive_group(required=True)
+    text_source.add_argument("--text")
+    text_source.add_argument("--text-file")
+    send.add_argument("--reply-to", type=positive_integer)
+
     return parser
 
 
@@ -160,6 +168,19 @@ async def dispatch(arguments: argparse.Namespace, application: TelegramApplicati
             chat=arguments.chat,
             message_id=arguments.message_id,
             dest_dir=arguments.dest_dir,
+        )
+    if command == "send":
+        application.require_send_enabled()
+        text = arguments.text
+        if arguments.text_file is not None:
+            text = read_confined_text(
+                arguments.text_file,
+                root=application.config.output_root,
+            )
+        return await application.send(
+            chat=arguments.chat,
+            text=text,
+            reply_to=arguments.reply_to,
         )
     raise RuntimeError(f"unsupported command: {command}")
 

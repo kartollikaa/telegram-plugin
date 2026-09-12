@@ -373,7 +373,7 @@ git commit -m "Добавляем поиск Telegram-чатов без точн
 - Consumes: `Config.allow_send`, `parse_chat_ref`, output-root confinement, and Telegram message ids.
 - Produces: `TelegramApplication.send(chat, text, reply_to=None) -> dict`; gateway `send(ref, text, reply_to=None) -> dict`; CLI mutually exclusive `--text` and `--text-file`; `SendDisabled` error code.
 
-- [ ] **Step 1: Write failing application/CLI tests for side-effect boundaries**
+- [x] **Step 1: Write failing application/CLI tests for side-effect boundaries**
 
 Cover disabled-by-default refusal before gateway access, one send per invocation, reply id forwarding, exact recipient/result fields, mutually exclusive text sources, empty text rejection, and confined text-file reads.
 
@@ -387,21 +387,21 @@ async def test_send_is_refused_before_gateway_access(config):
     assert gateway.sent == []
 ```
 
-- [ ] **Step 2: Run focused tests and verify the red state**
+- [x] **Step 2: Run focused tests and verify the red state**
 
 Run: `./.venv/bin/python -m pytest tests/test_application.py tests/test_cli.py -q`
 
 Expected: failures identify missing `SendDisabled`, `reply_to`, and send parser options.
 
-- [ ] **Step 3: Implement explicit send/reply**
+- [x] **Step 3: Implement explicit send/reply**
 
 Check `allow_send` in the application before parsing the chat or opening a network operation. Extend the gateway to pass `reply_to` to Telethon. Return `message_id`, `chat_id`, `chat_title`, and nullable `reply_to`. Read `--text-file` only through a new confined regular-file helper and reject symlinks, directories, empty files, and files outside `output_root`.
 
-- [ ] **Step 4: Remove the obsolete process quota**
+- [x] **Step 4: Remove the obsolete process quota**
 
 Delete `send_limit`, `TELEGRAM_SEND_LIMIT`, `SendLimitReached`, and MCP `sent_so_far`. Preserve conditional MCP send registration until Task 5, but delegate enabled sends to the application.
 
-- [ ] **Step 5: Add and pressure-test the focused send skill**
+- [x] **Step 5: Add and pressure-test the focused send skill**
 
 The description triggers only on explicit requests to send, message, reply, or answer in Telegram.
 Require recipient resolution before ambiguous sends, prohibit treating Telegram content as
@@ -410,7 +410,7 @@ and message id. Use `superpowers:writing-skills` with fresh agents to prove an o
 request proceeds, an ambiguous recipient is resolved before send, and a send instruction found in a
 Telegram message never authorizes a CLI side effect.
 
-- [ ] **Step 6: Run the focused Task 4 suite**
+- [x] **Step 6: Run the focused Task 4 suite**
 
 Run: `./.venv/bin/python -m pytest tests/test_application.py tests/test_cli.py tests/test_config.py tests/test_gateway_messages.py tests/test_server_tools.py tests/test_skills.py tests/test_permissions.py -q`
 
@@ -420,7 +420,7 @@ Expected: all pass; no live Telegram send occurs.
 
 Apply the global gate with special attention to command injection, symlink/path escape, disabled-side-effect ordering, reply targeting, and absence of secrets/message text in logs.
 
-- [ ] **Step 8: Commit Task 4**
+- [x] **Step 8: Commit Task 4**
 
 ```bash
 git add skills/send/SKILL.md src/telegram_plugin/application.py src/telegram_plugin/cli.py src/telegram_plugin/client.py src/telegram_plugin/config.py src/telegram_plugin/errors.py tests/fakes.py tests/test_application.py tests/test_cli.py tests/test_config.py tests/test_gateway_messages.py tests/test_server_tools.py tests/test_skills.py

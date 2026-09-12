@@ -32,7 +32,6 @@ def test_readme_documents_every_environment_variable():
         "TELEGRAM_PLUGIN_PYTHON",
         "TELEGRAM_PLUGIN_ALLOW_SEND",
         "TELEGRAM_MAX_DOWNLOAD_BYTES",
-        "TELEGRAM_PLUGIN_SEND_LIMIT",
         "TELEGRAM_IDLE_TIMEOUT",
         "TELEGRAM_LOCK_WAIT",
     ):
@@ -76,11 +75,15 @@ def test_the_design_document_documents_every_environment_variable():
     for variable in (
         "TELEGRAM_OUTPUT_ROOT",
         "TELEGRAM_MAX_DOWNLOAD_BYTES",
-        "TELEGRAM_PLUGIN_SEND_LIMIT",
         "TELEGRAM_IDLE_TIMEOUT",
         "TELEGRAM_LOCK_WAIT",
     ):
         assert variable in design, variable
+
+
+def test_obsolete_process_send_quota_is_not_documented():
+    for text in (README, ENV_EXAMPLE, (REPO / "docs/design.md").read_text()):
+        assert "TELEGRAM_PLUGIN_SEND_LIMIT" not in text
 
 
 def test_readme_warns_about_the_cold_first_run():

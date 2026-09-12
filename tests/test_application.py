@@ -5,7 +5,7 @@ import pytest
 from telegram_plugin.application import TelegramApplication
 from telegram_plugin.client import DIALOG_SCAN_CAP, Batch
 from telegram_plugin.config import load_config
-from telegram_plugin.errors import NotAuthorized, UnsafePath
+from telegram_plugin.errors import EmptyMessage, NotAuthorized, SendDisabled, UnsafePath
 from tests.fakes import FakeGateway
 
 
@@ -58,7 +58,7 @@ async def test_whoami_and_resolve_return_gateway_payloads(tmp_path):
 
 @pytest.mark.parametrize("operation", ["dialogs", "read", "search", "download", "send"])
 async def test_existing_operation_payload_parity(tmp_path, operation):
-    application = _application(tmp_path, TELEGRAM_PLUGIN_SEND_LIMIT="2")
+    application = _application(tmp_path, TELEGRAM_PLUGIN_ALLOW_SEND="1")
 
     if operation == "dialogs":
         actual = await application.dialogs(query="alp", limit=10)
@@ -109,11 +109,10 @@ async def test_existing_operation_payload_parity(tmp_path, operation):
     else:
         actual = await application.send(chat="@alpha", text="hello")
         expected = {
-            "id": 999,
+            "message_id": 999,
             "chat_id": -1001,
             "chat_title": "Alpha",
-            "sent_so_far": 1,
-            "send_limit": 2,
+            "reply_to": None,
         }
 
     assert actual == expected
@@ -140,15 +139,55 @@ async def test_wide_reads_return_jsonl_metadata(tmp_path, operation):
     )
 
 
-async def test_send_keeps_the_existing_process_counter(tmp_path):
-    application = _application(tmp_path, TELEGRAM_PLUGIN_SEND_LIMIT="2")
+async def test_send_is_refused_before_gateway_access(tmp_path):
+    gateway = FakeGateway()
+    application = _application(tmp_path, gateway)
 
-    first = await application.send(chat="@alpha", text="hello")
-    second = await application.send(chat="@alpha", text="again")
+    with pytest.raises(SendDisabled):
+        await application.send(chat="not a ref!", text="hello")
 
-    assert first["sent_so_far"] == 1
-    assert second["sent_so_far"] == 2
-    assert second["send_limit"] == 2
+    assert gateway.sent == []
+
+
+@pytest.mark.parametrize("reply_to", [None, 42])
+async def test_send_forwards_one_message_and_returns_actual_recipient(
+    tmp_path,
+    reply_to,
+):
+    gateway = FakeGateway()
+    application = _application(
+        tmp_path,
+        gateway,
+        TELEGRAM_PLUGIN_ALLOW_SEND="1",
+    )
+
+    result = await application.send(
+        chat="@alpha",
+        text="hello",
+        reply_to=reply_to,
+    )
+
+    assert gateway.sent == [("alpha", "hello", reply_to)]
+    assert result == {
+        "message_id": 999,
+        "chat_id": -1001,
+        "chat_title": "Alpha",
+        "reply_to": reply_to,
+    }
+
+
+async def test_empty_send_text_is_refused_before_gateway_access(tmp_path):
+    gateway = FakeGateway()
+    application = _application(
+        tmp_path,
+        gateway,
+        TELEGRAM_PLUGIN_ALLOW_SEND="1",
+    )
+
+    with pytest.raises(EmptyMessage):
+        await application.send(chat="@alpha", text=" \n\t")
+
+    assert gateway.sent == []
 
 
 async def test_domain_errors_propagate_to_transport(tmp_path):
