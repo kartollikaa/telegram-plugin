@@ -109,8 +109,11 @@ def test_venv_is_built_under_the_state_directory(first_run):
 
 
 def test_no_half_installed_environment_is_left_behind(first_run):
+    """The staging directory comes from `mktemp -d "$STATE/venv.XXXXXX"`, so it is
+    never literally `venv.tmp`; asserting that name proved nothing."""
     state, _, _ = first_run
-    assert not (state / "venv.tmp").exists()
+    leftovers = [path.name for path in state.glob("venv.*") if path.is_dir()]
+    assert leftovers == [], leftovers
 
 
 def test_the_plugin_directory_is_not_written_to(first_run):

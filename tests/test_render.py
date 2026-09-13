@@ -113,7 +113,7 @@ def test_envelope_reports_what_was_omitted():
     env = envelope([{"id": 1}], has_more=True, next_cursor=1, remaining=209, total=210)
     assert env["remaining"] == 209
     assert "209 more available" in env["note"]
-    assert "min_id=1" in env["note"]
+    assert "--min-id 1" in env["note"]
 
 
 def test_envelope_says_so_when_the_remaining_count_is_not_knowable():
@@ -131,13 +131,13 @@ def test_envelope_points_at_the_next_page_without_inventing_a_count():
     assert env["returned"] == 1
     assert env["has_more"] is True
     assert env["next_cursor"] == 1
-    assert "min_id=1" in env["note"]
-    assert "out_path" in env["note"]
+    assert "--min-id 1" in env["note"]
+    assert "--out PATH" in env["note"]
 
 
 def test_envelope_can_point_backwards_for_search():
     env = envelope([{"id": 9}], has_more=True, next_cursor=9, cursor_field="max_id")
-    assert "max_id=9" in env["note"]
+    assert "--max-id 9" in env["note"]
     assert "min_id" not in env["note"]
 
 

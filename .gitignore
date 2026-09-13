@@ -11,7 +11,6 @@
 # Anywhere a run might land output inside a checkout
 downloads/
 *.jsonl
-venv.tmp/
 .ruff_cache/
 
 # Python

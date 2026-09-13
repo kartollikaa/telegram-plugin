@@ -43,6 +43,8 @@ Limits above the documented ceiling are rejected by the CLI. Narrow with `--sinc
 `--until`, `--from-user`, or `--media-only` before widening.
 
 For a range larger than one page, add `--out RELATIVE.jsonl` and process the returned file.
+`--out-limit` bounds that export (default 1000) and stops there without flagging it, so compare
+the returned `lines` against the range you asked for before reporting it as complete.
 Download one known attachment with `download CHAT MESSAGE_ID --dest-dir RELATIVE_DIR`.
 Use only paths under the configured output root.
 

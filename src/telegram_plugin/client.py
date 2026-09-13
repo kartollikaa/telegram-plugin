@@ -175,7 +175,7 @@ class _LockAttempt:
 async def acquire_session_lock(path: str | Path, timeout: float = 0.0) -> SessionLockHandle:
     """Wait for the account rather than refusing it outright.
 
-    One server per session means a second session used to be told "held by another
+    One holder per session means a second caller used to be told "held by another
     process" for as long as the first lived. Waiting turns that into a pause.
     """
     attempt = _LockAttempt(path, timeout)
@@ -262,7 +262,7 @@ class TelethonGateway:
         """Give the account back between bursts, so another session can have it.
 
         Sleeps to the release deadline rather than polling: the deadline is known
-        exactly, and every extra wakeup is paid by every server on the machine.
+        exactly, and every extra wakeup is paid by every process on the machine.
         Reconnecting is cheap because the session file already holds the auth key.
         """
         timeout = self._config.idle_timeout

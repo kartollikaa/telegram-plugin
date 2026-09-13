@@ -14,11 +14,15 @@ WORKFLOW = REPO / ".github/workflows/ci.yml"
 
 # The design spec and the implementation plan describe the MCP runtime precisely
 # because it was removed; they are archived history, not an active surface.
-ARCHIVED_HISTORY = "docs/superpowers/"
+# Exempting a whole prefix would let a new file be dropped in beside these two and
+# inherit the exemption. Only the archived design record itself is exempt, by name.
+ARCHIVED_HISTORY = (
+    "docs/superpowers/specs/2026-09-12-cli-first-agent-plugin-design.md",
+    "docs/superpowers/plans/2026-09-12-cli-first-agent-plugin.md",
+)
 
 # Files whose whole job is to assert that something is absent have to name it.
-# Excluding them is unavoidable, so each one is checked below for still being a
-# guard — otherwise the exclusion quietly becomes a hole.
+# Excluding them is unavoidable, so each is checked below for still being a guard.
 ABSENCE_GUARDS = (
     "tests/test_security_tooling.py",
     "tests/test_manifests.py",
@@ -27,8 +31,12 @@ ABSENCE_GUARDS = (
 )
 
 # Never Telethon API, so a match anywhere is a leftover from the MCP runtime.
+# `mcp` is matched without a trailing word boundary because `_` is a word
+# character: \bmcp\b would sail past fastmcp and mcp_server_lib.
 MCP_RUNTIME = (
-    r"\bmcp\b",
+    r"(?<![a-z0-9_])mcp(?![a-z0-9])",
+    r"mcp[_a-z]*server",
+    r"fastmcp",
     r"mcpServers",
     r"telegram-mcp",
     r"\blist_dialogs\b",
@@ -41,38 +49,75 @@ MCP_RUNTIME = (
 # gateway calls legitimately. They were ALSO the old tool names, so they are
 # forbidden only where they could only mean the tool surface.
 MCP_TOOL_NAMES_IN_PROSE = (r"\bdownload_media\b", r"\bsend_message\b")
-OPERATOR_FACING = ("README.md", "docs/design.md", ".env.example", "plugin.json")
+OPERATOR_FACING = (
+    "README.md",
+    "docs/design.md",
+    ".env.example",
+    "plugin.json",
+    ".claude-plugin/plugin.json",
+)
 
-# Both spellings of every forbidden operation: Telethon's convenience method and
-# the raw request it wraps. Watching only the friendly name would miss the one an
-# implementer reaches for when the convenience method does not exist — join,
-# leave and reaction have no convenience method at all.
+# Every spelling of every forbidden operation that Telethon 1.x actually offers:
+# the convenience method, the Message shortcut, and the raw request. Watching one
+# spelling is what let an earlier version of this guard pass a command that left
+# chats -- `delete_dialog` is the convenience method for leaving, so "leave has no
+# convenience method" was simply wrong.
 FORBIDDEN_SIDE_EFFECTS = (
     r"\bdelete_messages\b",
+    r"\bdelete_dialog\b",
     r"\bDeleteMessagesRequest\b",
+    r"\bDeleteHistoryRequest\b",
+    r"\bDeleteChatUserRequest\b",
     r"\bedit_message\b",
     r"\bEditMessageRequest\b",
     r"\bforward_messages\b",
     r"\bForwardMessagesRequest\b",
+    r"\bforward_to\b",
     r"\bJoinChannelRequest\b",
     r"\bLeaveChannelRequest\b",
     r"\bkick_participant\b",
     r"\bedit_permissions\b",
     r"\bEditBannedRequest\b",
+    r"\bBlockRequest\b",
+    r"\bpin_message\b",
+    r"\bunpin_message\b",
+    r"\bUpdatePinnedMessageRequest\b",
     r"\bSendReactionRequest\b",
     r"\bsend_read_acknowledge\b",
+    r"\bmark_read\b",
+    r"\bMarkDialogUnreadRequest\b",
     r"\bReadHistoryRequest\b",
+    r"\bsend_file\b",
+)
+
+# The denylists above catch a forbidden call inside an existing command. This
+# catches the other move: a brand-new command, whatever it is called.
+EXPECTED_COMMANDS = frozenset(
+    {
+        "whoami",
+        "dialogs",
+        "find-chat",
+        "resolve",
+        "message",
+        "thread",
+        "read",
+        "search",
+        "download",
+        "send",
+    }
 )
 
 
 def _tracked_files() -> list[str]:
+    """NUL-separated: splitting on whitespace turns `legacy bridge.py` into two
+    paths that do not exist, and _scan's OSError guard then swallows both."""
     listing = subprocess.run(
-        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
-    ).stdout.split()
+        ["git", "ls-files", "-z"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
     return [
         name
         for name in listing
-        if not name.startswith(ARCHIVED_HISTORY) and name not in ABSENCE_GUARDS
+        if name and name not in ARCHIVED_HISTORY and name not in ABSENCE_GUARDS
     ]
 
 
@@ -95,8 +140,9 @@ def _scan(patterns, names=None) -> dict[str, set[str]]:
 
 def test_the_mcp_matcher_finds_a_known_positive():
     fixture = (
-        "mcpServers pointing at bin/telegram-mcp, an mcp dependency, and the old "
-        "list_dialogs / resolve_chat / read_messages / search_messages tool calls."
+        "mcpServers pointing at bin/telegram-mcp, a bare mcp dependency, fastmcp, "
+        "an mcp_server_lib import, and the old list_dialogs / resolve_chat / "
+        "read_messages / search_messages tool calls."
     )
     assert _hits(MCP_RUNTIME, fixture) == set(MCP_RUNTIME)
 
@@ -109,12 +155,16 @@ def test_the_prose_tool_name_matcher_finds_a_known_positive():
 
 def test_the_side_effect_matcher_finds_a_known_positive():
     fixture = (
-        "delete_messages DeleteMessagesRequest edit_message EditMessageRequest "
-        "forward_messages ForwardMessagesRequest JoinChannelRequest "
-        "LeaveChannelRequest kick_participant edit_permissions EditBannedRequest "
-        "SendReactionRequest send_read_acknowledge ReadHistoryRequest"
+        "delete_messages delete_dialog DeleteMessagesRequest DeleteHistoryRequest "
+        "DeleteChatUserRequest edit_message EditMessageRequest forward_messages "
+        "ForwardMessagesRequest forward_to JoinChannelRequest LeaveChannelRequest "
+        "kick_participant edit_permissions EditBannedRequest BlockRequest "
+        "pin_message unpin_message UpdatePinnedMessageRequest SendReactionRequest "
+        "send_read_acknowledge mark_read MarkDialogUnreadRequest ReadHistoryRequest "
+        "send_file"
     )
-    assert _hits(FORBIDDEN_SIDE_EFFECTS, fixture) == set(FORBIDDEN_SIDE_EFFECTS)
+    missed = set(FORBIDDEN_SIDE_EFFECTS) - _hits(FORBIDDEN_SIDE_EFFECTS, fixture)
+    assert missed == set(), f"patterns that match nothing are dead weight: {missed}"
 
 
 def test_the_matcher_actually_reads_the_repository():
@@ -122,16 +172,6 @@ def test_the_matcher_actually_reads_the_repository():
     tracked = _tracked_files()
     assert len(tracked) > 20
     assert "src/telegram_plugin/cli.py" in tracked
-
-
-def test_every_excluded_file_is_still_an_absence_guard():
-    """The exclusions above are load-bearing. If one stops asserting absence it
-    becomes an unwatched place to hide exactly what the sweep looks for."""
-    for name in ABSENCE_GUARDS:
-        path = REPO / name
-        assert path.exists(), name
-        text = path.read_text()
-        assert re.search(r"assert (not|never)|== \{\}|== set\(\)|not in ", text), name
 
 
 def test_no_active_mcp_surface_remains():
@@ -209,3 +249,34 @@ def test_the_allowlist_explains_itself_and_stays_short():
     assert len(entries) <= 3, "every entry is a hole in the history sweep"
     assert "#" in allowlist, "each entry needs a reason above it"
     assert ".security-allowlist" in (REPO / "scripts/security-check.sh").read_text()
+
+
+def test_the_cli_exposes_exactly_the_expected_commands():
+    """An allowlist, not a denylist. A denylist only catches a forbidden call it
+    already knows how to spell; this catches any new command at all, whatever it
+    is named and however it is implemented."""
+    from telegram_plugin.cli import build_parser
+
+    commands = next(
+        action.choices
+        for action in build_parser()._actions
+        if getattr(action, "choices", None)
+    )
+    assert set(commands) == EXPECTED_COMMANDS, (
+        "the command surface changed; a new command needs a deliberate decision, "
+        "not a passing test"
+    )
+
+
+def test_every_excluded_file_still_guards_the_vocabulary_it_is_exempt_from():
+    """A nominal check — 'contains the word assert' — would let an exempt file stop
+    guarding and become the one unwatched place to hide what the sweep looks for."""
+    for name in ABSENCE_GUARDS:
+        path = REPO / name
+        assert path.exists(), name
+        text = path.read_text()
+        assert re.search(r"assert (not|never)|== \{\}|== set\(\)|not in ", text), name
+
+    here = (REPO / "tests/test_security_tooling.py").read_text()
+    for constant in ("MCP_RUNTIME", "FORBIDDEN_SIDE_EFFECTS", "EXPECTED_COMMANDS"):
+        assert here.count(constant) >= 2, f"{constant} is declared but never enforced"

@@ -27,7 +27,7 @@ VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)
 WANTED=$(digest "$DEPS|$VERSION")
 
 has_dependencies() {
-    "$1" -c 'import telethon' >/dev/null 2>&1
+    "$1" -c 'import telethon' >/dev/null 2>&1 3>&-
 }
 
 refuse_to_delete_a_non_venv() {
@@ -36,6 +36,15 @@ refuse_to_delete_a_non_venv() {
         echo "[telegram-plugin] virtualenv this plugin created. Check TELEGRAM_STATE_DIR." >&2
         exit 1
     fi
+}
+
+cleanup_install() {
+    # The staging venv is ~27MB. Every exit after mktemp but before the mv --
+    # a failed pip, or the refusal to delete a non-venv -- used to leak one.
+    if [ -n "${STAGE:-}" ] && [ -d "$STAGE" ]; then
+        rm -rf "$STAGE"
+    fi
+    rmdir "$LOCKDIR" 2>/dev/null || true
 }
 
 acquire_install_lock() {
@@ -49,13 +58,13 @@ acquire_install_lock() {
         fi
         sleep 1
     done
-    trap 'rmdir "$LOCKDIR" 2>/dev/null || true' EXIT INT TERM
+    trap cleanup_install EXIT INT TERM
 }
 
 install_into() {
-    "$1" -m pip install --quiet --disable-pip-version-check --upgrade pip >&2
+    "$1" -m pip install --quiet --disable-pip-version-check --upgrade pip >&2 3>&-
     # shellcheck disable=SC2086
-    "$1" -m pip install --quiet --disable-pip-version-check $DEPS >&2
+    "$1" -m pip install --quiet --disable-pip-version-check $DEPS >&2 3>&-
 }
 
 if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
@@ -78,7 +87,7 @@ else
             ! has_dependencies "$PYTHON"; then
             echo "[telegram-plugin] installing dependencies into $VENV" >&2
             STAGE=$(mktemp -d "$STATE/venv.XXXXXX")
-            if ! python3 -m venv "$STAGE"; then
+            if ! python3 -m venv "$STAGE" 3>&-; then
                 rm -rf "$STAGE"
                 echo "[telegram-plugin] cannot create a virtualenv: python3 -m venv failed." >&2
                 echo "[telegram-plugin] On Debian/Ubuntu install python3-venv, or point" >&2

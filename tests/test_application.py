@@ -73,7 +73,7 @@ async def test_existing_operation_payload_parity(tmp_path, operation):
                 }
             ],
             "returned": 1,
-            "note": "1 chats shown (limit 10). Narrow with query= if the one you want is missing.",
+            "note": "1 chats shown (limit 10). Narrow with --query if the one you want is missing.",
         }
     elif operation == "read":
         actual = await application.read(chat="@alpha", limit=2)
@@ -84,7 +84,7 @@ async def test_existing_operation_payload_parity(tmp_path, operation):
             "next_cursor": 2,
             "remaining": 10,
             "note": (
-                "2 returned, 10 more available — continue with min_id=2, or pass out_path "
+                "2 returned, 10 more available — continue with --min-id 2, or pass --out PATH "
                 "to write the whole range to a JSONL file instead of into this conversation."
             ),
         }
@@ -97,7 +97,7 @@ async def test_existing_operation_payload_parity(tmp_path, operation):
             "next_cursor": 10,
             "note": (
                 "3 returned, more available (the count in this range is not known without "
-                "scanning it) — continue with max_id=10, or pass out_path to write the whole "
+                "scanning it) — continue with --max-id 10, or pass --out PATH to write the whole "
                 "range to a JSONL file instead of into this conversation."
             ),
         }
@@ -243,3 +243,18 @@ async def test_find_chat_preserves_ambiguous_candidates(tmp_path):
             "Compare score and matched_by, then read a small sample before choosing."
         ),
     }
+
+
+async def test_an_empty_dialog_result_says_which_kind_of_empty_it_is(tmp_path):
+    """"No chats at all" and "none of the N scanned matched" are different answers,
+    and an agent that cannot tell them apart re-runs the same query or gives up
+    wrongly. This lived only in the deleted protocol-surface tests."""
+    application = TelegramApplication(load_config({"HOME": str(tmp_path)}), FakeGateway())
+
+    nothing_matched = await application.dialogs(query="no-such-chat-anywhere")
+    assert nothing_matched["items"] == []
+    assert "Nothing matched among the 2 chats scanned" in nothing_matched["note"]
+
+    something_matched = await application.dialogs(query="alpha")
+    assert [row["title"] for row in something_matched["items"]] == ["Alpha"]
+    assert "Nothing matched" not in something_matched["note"]

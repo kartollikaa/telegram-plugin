@@ -26,8 +26,9 @@ class SessionLocked(TelegramPluginError):
     def __init__(self, path: str) -> None:
         super().__init__(
             f"The session at {path} is held by another process — Telegram revokes an auth key "
-            "used by two clients at once, so this server refuses to share it. Stop the other "
-            "client, or point TELEGRAM_STATE_DIR at a separate state directory with its own login."
+            "used by two clients at once, so this command refuses to share it. Let the other "
+            "one finish, or point TELEGRAM_STATE_DIR at a separate state directory with its "
+            "own login."
         )
 
 

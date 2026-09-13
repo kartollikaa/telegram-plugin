@@ -56,7 +56,8 @@ cheap enough — far cheaper than the first handshake, which is paid only at log
 
 ## Repository shape
 
-One repository, one executable, three skills, two manifests.
+One repository, two executables — the CLI agents call and the login a human runs
+— three skills, and two manifests.
 
 ```
 plugin.json                  portable Agent Plugins manifest — the canonical one
@@ -95,8 +96,9 @@ owns Telegram: connection, authorisation, flood waits, entity resolution, the
 session lock, and cleanup.
 
 The split is not decoration. It is the reason the cutover from a server to a CLI
-was mechanical rather than a rewrite, and the reason the operation tests never
-had to change when it happened.
+was mechanical rather than a rewrite: `test_application.py` did not change at all,
+because the envelopes did not. The transport-facing tests were rewritten, and the
+ones that tested the protocol surface itself were deleted with it.
 
 ## Launcher and dependency bootstrap
 
@@ -262,8 +264,9 @@ stranger's message — the link points at the other chat, or is omitted.
 
 ## The stdout contract
 
-One compact JSON object per invocation, with a trailing newline, and nothing else
-on stdout ever. Exit `0` for success, `1` for a domain or runtime failure whose
+One compact JSON object per invocation, with a trailing newline, and no
+diagnostic or bootstrap output on stdout ever. `--help` and `--version` are the
+exceptions, printing human text and exiting `0` without touching Telegram. Exit `0` for success, `1` for a domain or runtime failure whose
 structured error is on stdout, `2` for invalid argv whose usage text is on stderr
 and whose stdout is empty.
 
@@ -304,7 +307,8 @@ The constraints are part of the contract, not advice:
 
 - **Ceilings are validated, not defaulted.** `--limit` is checked against `1..200`
   rather than merely defaulted, so an over-eager caller is corrected rather than
-  served eight thousand rows.
+  served eight thousand rows. `find-chat` is bounded at 50 instead: it exists to
+  return a shortlist a human can choose from.
 - **Message text is truncated** at 500 characters, with a flag on the message
   saying so; display names and titles are truncated at 80. The full text of a
   specific message is still reachable by asking for that id with `message`.
@@ -316,12 +320,19 @@ The constraints are part of the contract, not advice:
   here, and is not a count at all for a global search — it will cheerfully report
   tens of thousands of matches for a word that appears in nearly every message.
   Where the number would be invented, the note says so instead.
-- **Cursor pagination by id.** `next_cursor` is the last id returned; the caller
-  continues with `--min-id`. There is no "ask again, but bigger".
+- **Cursor pagination by id**, in whichever direction the operation runs. `read`
+  goes forward, so `next_cursor` is the highest id returned and the caller
+  continues with `--min-id`. `search` returns newest first, so its `next_cursor`
+  is the *lowest* id returned and the caller continues with `--max-id`. Reading
+  one rule as the other silently re-reads the same page, which is why every
+  envelope carries `cursor_field` naming the one that applies. There is no
+  "ask again, but bigger".
 - **`--out` writes JSONL to disk** and returns only the path, the line count and
   the id range. This is the answer for "export a month of this chat": the data
   lands in a file the agent can then process, and the context window sees a
-  handful of numbers.
+  handful of numbers. `--out-limit` bounds it, and the export currently stops at
+  that bound **without flagging it** — a truncated dump is shaped exactly like a
+  complete one. The caller has to compare `lines` against the range it asked for.
 
 ## Dependencies
 

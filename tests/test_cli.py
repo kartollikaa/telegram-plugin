@@ -1,12 +1,13 @@
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from telegram_plugin.cli import main
+from telegram_plugin.cli import build_parser, main
 from tests.fakes import FakeGateway
 
 REPO = Path(__file__).resolve().parents[1]
@@ -456,3 +457,41 @@ def test_send_text_source_validation(capsys, tmp_path):
     assert code == 1
     assert json.loads(captured.out)["error"]["code"] == "unsafe_path"
     assert unsafe.sent == []
+
+
+def _parser_options() -> set[str]:
+    options: set[str] = set()
+    stack = [build_parser()]
+    while stack:
+        parser = stack.pop()
+        for action in parser._actions:
+            options.update(action.option_strings)
+            for choice in (getattr(action, "choices", None) or {}).values():
+                if hasattr(choice, "_actions"):
+                    stack.append(choice)
+    return options
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["read", "@alpha", "--limit", "2"],
+        ["search", "anything", "--chat", "@alpha", "--limit", "2"],
+        ["dialogs"],
+    ],
+)
+def test_notes_only_advertise_options_the_parser_accepts(capsys, tmp_path, argv):
+    """A note is an instruction the agent executes next. The old protocol surface
+    named its arguments `min_id=` and `out_path=`; the CLI accepts neither, so a
+    note carried over from that spelling sends the agent straight into exit 2."""
+    code, captured, _ = _invoke(capsys, tmp_path, argv)
+
+    assert code == 0
+    note = json.loads(captured.out)["note"]
+    advertised = set(re.findall(r"--[a-z][a-z-]*", note))
+    assert advertised <= _parser_options(), (
+        f"note advertises options the parser rejects: {advertised - _parser_options()}"
+    )
+    assert not re.search(r"\b(min_id|max_id|out_path|query)=", note), (
+        f"note uses the old argument spelling: {note}"
+    )

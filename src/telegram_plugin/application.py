@@ -28,12 +28,12 @@ class TelegramApplication:
         note = f"{len(batch.rows)} chats shown (limit {limit})."
         if batch.scan_truncated:
             note += (
-                f" Scanning stopped after {batch.scanned} chats to stay cheap — narrow with query=."
+                f" Scanning stopped after {batch.scanned} chats to stay cheap — narrow with --query."
             )
         elif not batch.rows and batch.scanned:
             note += f" Nothing matched among the {batch.scanned} chats scanned."
         else:
-            note += " Narrow with query= if the one you want is missing."
+            note += " Narrow with --query if the one you want is missing."
         return {"items": batch.rows, "returned": len(batch.rows), "note": note}
 
     async def resolve(self, ref: str) -> dict:

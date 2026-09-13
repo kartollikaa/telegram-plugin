@@ -209,7 +209,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
 
 
 def _status_command(config: Config) -> int:
-    """A running server holding the session is itself an answer, not a failure."""
+    """Another command holding the session is itself an answer, not a failure."""
     try:
         # Deliberately not waiting: "someone is using it" is the status, and a
         # status command that blocks for twenty seconds is a worse answer.
@@ -241,8 +241,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         # Taken before anything else, including the credentials check: if the
-        # server holds this session, logging in here would put two clients on one
-        # auth key and Telegram would revoke it. Waiting, because the server lets
+        # command holds this session, logging in here would put two clients on one
+        # auth key and Telegram would revoke it. Waiting, because the holder lets
         # go once it goes idle — refusing outright would send the operator hunting
         # a client that is about to release on its own.
         with session_lock(config.session_path, config.lock_wait):

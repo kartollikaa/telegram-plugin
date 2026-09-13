@@ -45,10 +45,12 @@ claude plugin install telegram@<your-marketplace>
 ```
 
 **Codex / OpenAI plugins.** The root [`plugin.json`](plugin.json) is an Agent
-Plugins manifest, so the repository is a portable plugin directory: point a local
-or repo marketplace entry's `source.path` at this checkout and install it from
-the Plugins Directory. Skills are discovered from `skills/` automatically — the
-manifest does not, and must not, list them.
+Plugins manifest, so the repository is shaped as a portable plugin directory and
+skills are discovered from `skills/` automatically — the manifest does not, and
+must not, list them. The manifest is validated against the published schema in
+CI, but **the install has not been run against a Codex or ChatGPT host**, so
+treat the host-side steps as untested. The absolute-path usage below works
+regardless and is the path to fall back to.
 
 **Any other local agent.** There is nothing to configure. Give the agent the
 launcher's absolute path and let it run commands:
@@ -173,8 +175,12 @@ is null — never an id read as belonging to this one.
 
 ### The JSON contract
 
-One compact JSON object on stdout per call, followed by a newline. Nothing else
-is ever written to stdout, so the output is safe to pipe straight into a parser.
+One compact JSON object on stdout per call, followed by a newline. No diagnostic,
+progress or dependency output ever joins it, so the result is safe to pipe straight
+into a parser.
+
+The two exceptions are the ones you would expect: `--help` and `--version` print
+human text and exit `0`. Everything that touches Telegram answers in JSON.
 
 | Exit code | Means | Where to look |
 |---|---|---|
@@ -255,12 +261,19 @@ These are deliberate. A command that empties five hundred messages into a contex
 window is useless, and a plugin holding a personal session should not be able to
 do damage on a misread instruction.
 
-- **`--limit` is capped at 200**, so an over-large request is refused rather than
-  quietly trimmed. Message text is truncated at 500 characters and flagged.
+- **`--limit` is capped**, so an over-large request is refused rather than quietly
+  trimmed: 200 for `read`, `search` and `dialogs`, and 50 for `find-chat`, whose
+  job is to hand you a shortlist. Message text is truncated at 500 characters and
+  flagged.
 - **Wide ranges go to disk.** Pass `--out` and the rows are written as JSONL; the
-  reply is a path, a line count and an id range.
-- **Paging is by cursor.** Every read returns `next_cursor`; continue with
-  `--min-id`.
+  reply is a path, a line count and an id range. `--out-limit` bounds that export
+  (default 1000, maximum 5000). **It stops at the limit without saying so** — the
+  reply looks the same as a complete export, so compare `lines` against what you
+  expected before treating a dump as the whole range.
+- **Paging is by cursor.** `read` moves forward: `next_cursor` is the last (highest)
+  id returned, and you continue with `--min-id`. `search` moves backward, newest
+  first: its `next_cursor` is the first (lowest) id returned, and you continue with
+  `--max-id`. `cursor_field` in every envelope names which one applies.
 - **Writes are confined.** `--out` and `--dest-dir` must stay inside
   `TELEGRAM_OUTPUT_ROOT` (by default the state directory's `downloads/`), and an
   existing file is never overwritten silently.
