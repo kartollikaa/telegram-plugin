@@ -107,7 +107,9 @@ class FakeGateway:
             raise MessageNotFound(message_id)
         return row
 
-    async def thread(self, ref: ChatRef, root_message_id: int, limit: int) -> Batch:
+    async def thread(
+        self, ref: ChatRef, root_message_id: int, limit: int, min_id: int | None = None
+    ) -> Batch:
         self._check()
         matches = []
         for row in self.rows:
@@ -117,6 +119,8 @@ class FakeGateway:
             )
             if belongs:
                 matches.append(row)
+        if min_id:
+            matches = [row for row in matches if row["id"] > min_id]
         rows = sorted(matches, key=lambda row: row["id"])[:limit]
         return Batch(rows=rows, scanned=len(rows))
 

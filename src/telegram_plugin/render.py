@@ -114,10 +114,10 @@ def _describe_media(media: Any) -> dict | None:
         return None
     document = getattr(media, "document", None)
     file_name = _document_file_name(document)
-    size = (
-        getattr(media, "size", None)
-        or getattr(document, "size", None)
-        or _largest_photo_size(media)
+    size = _first_known(
+        getattr(media, "size", None),
+        getattr(document, "size", None),
+        _largest_photo_size(media),
     )
     mime = getattr(media, "mime_type", None) or getattr(document, "mime_type", None)
     return {
@@ -135,10 +135,25 @@ def _document_file_name(document: Any) -> str | None:
     return None
 
 
+def _first_known(*candidates: int | None) -> int | None:
+    """`or` would read a zero-byte attachment as "size unknown"."""
+    return next((value for value in candidates if isinstance(value, int)), None)
+
+
 def _largest_photo_size(media: Any) -> int | None:
-    """A photo has no single size; the largest rendition is the honest answer."""
-    sizes = getattr(getattr(media, "photo", None), "sizes", None) or ()
-    known = [value for value in (getattr(s, "size", None) for s in sizes) if isinstance(value, int)]
+    """A photo has no single size; the largest rendition is the honest answer.
+
+    The largest rendition of a modern photo is a `PhotoSizeProgressive`, which
+    carries `sizes: list[int]` and no `size` at all — reading only `.size` skips
+    it and under-reports by an order of magnitude.
+    """
+    known: list[int] = []
+    for rendition in getattr(getattr(media, "photo", None), "sizes", None) or ():
+        single = getattr(rendition, "size", None)
+        if isinstance(single, int):
+            known.append(single)
+        progressive = getattr(rendition, "sizes", None) or ()
+        known.extend(value for value in progressive if isinstance(value, int))
     return max(known) if known else None
 
 
@@ -171,6 +186,12 @@ def envelope(
             "or pass --out PATH to write the whole range to a JSONL file instead of into this "
             "conversation."
         )
+    elif scan_truncated:
+        note = (
+            f"{len(items)} returned, and the scan stopped at {scanned} messages before "
+            f"reaching the end — more may exist. Narrow the range with {_flag(cursor_field)} "
+            "and ask again."
+        )
     elif items:
         note = f"{len(items)} returned; nothing left in this range."
     elif scanned:
@@ -180,10 +201,10 @@ def envelope(
         )
     else:
         note = "nothing in this range."
-    if scan_truncated:
+    if scan_truncated and has_more:
         note += (
-            f" Scanning stopped at {scanned} messages to stay cheap; narrow the range "
-            f"with {_flag(cursor_field)} and ask again."
+            f" Scanning also stopped at {scanned} messages to stay cheap, so the "
+            "remaining count is a floor, not a total."
         )
     result = {
         "items": items,

@@ -75,7 +75,9 @@ class TelegramGateway(Protocol):
 
     async def message(self, ref: ChatRef, message_id: int) -> dict: ...
 
-    async def thread(self, ref: ChatRef, root_message_id: int, limit: int) -> Batch: ...
+    async def thread(
+        self, ref: ChatRef, root_message_id: int, limit: int, min_id: int | None = None
+    ) -> Batch: ...
 
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str: ...
 
@@ -491,7 +493,9 @@ class TelethonGateway:
                 _internal_id(entity),
             )
 
-    async def thread(self, ref: ChatRef, root_message_id: int, limit: int) -> Batch:
+    async def thread(
+        self, ref: ChatRef, root_message_id: int, limit: int, min_id: int | None = None
+    ) -> Batch:
         async with self._session() as client:
             entity = await self._entity(ref)
             username = getattr(entity, "username", None)
@@ -502,6 +506,7 @@ class TelethonGateway:
                     entity,
                     reply_to=root_message_id,
                     limit=limit,
+                    min_id=min_id or 0,
                     reverse=True,
                 )
             ]

@@ -99,6 +99,16 @@ class SendDisabled(TelegramPluginError):
         )
 
 
+class InvalidTimestamp(TelegramPluginError):
+    code = "invalid_timestamp"
+
+    def __init__(self, value: str) -> None:
+        super().__init__(
+            f"Cannot read {value!r} as a time. Use ISO 8601: 2026-09-13, "
+            "2026-09-13T14:30, or 2026-09-13T14:30:00+03:00."
+        )
+
+
 class EmptyMessage(TelegramPluginError):
     code = "empty_text"
 

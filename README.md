@@ -207,6 +207,7 @@ prose. The complete set:
 | `no_such_media` | that message carries no attachment |
 | `media_too_large` | the attachment exceeds `TELEGRAM_MAX_DOWNLOAD_BYTES` |
 | `unsafe_path` | a read or write path escaped the output root |
+| `invalid_timestamp` | `--since` or `--until` was not ISO 8601 |
 | `send_disabled` | sending is off; nothing was sent |
 | `empty_text` | the message body was empty or whitespace |
 | `flood_wait` | Telegram asked for a wait; the message carries the seconds |

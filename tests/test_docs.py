@@ -173,12 +173,14 @@ def test_every_cli_flag_is_documented_in_the_readme():
         for action in build_parser()._actions
         if getattr(action, "choices", None)
     )
+    # Substring matching would pass `--text` on the strength of `--text-file`.
+    documented = set(re.findall(r"--[a-z][a-z-]*", README))
     undocumented = {
         option
         for parser in commands.values()
         for action in parser._actions
         for option in action.option_strings
-        if option not in ("-h", "--help") and option not in README
+        if option not in ("-h", "--help") and option not in documented
     }
     assert undocumented == set(), undocumented
 

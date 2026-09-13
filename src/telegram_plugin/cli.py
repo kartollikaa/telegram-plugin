@@ -72,12 +72,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     message = commands.add_parser("message", help="read one exact message")
     message.add_argument("chat", help="t.me link, @username or numeric id")
-    message.add_argument("message_id", type=positive_integer)
+    message.add_argument("message_id", type=positive_integer, help="the exact message id")
 
     thread = commands.add_parser("thread", help="read replies in one topic or comment thread")
     thread.add_argument("chat", help="t.me link, @username or numeric id")
     thread.add_argument(
         "root_message_id", type=positive_integer, help="the topic or comment root"
+    )
+    thread.add_argument(
+        "--min-id", type=cursor_integer, help="exclusive lower bound; continue here"
     )
     thread.add_argument(
         "--limit", type=limit_value, default=DEFAULT_ITEMS, help=f"1..{MAX_ITEMS}"
@@ -91,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("--min-id", type=cursor_integer, help="exclusive lower bound; continue here")
     read.add_argument("--max-id", type=cursor_integer, help="exclusive upper bound")
     read.add_argument("--since", help="ISO 8601 date or datetime, inclusive")
-    read.add_argument("--until", help="ISO 8601 date or datetime, exclusive")
+    read.add_argument("--until", help="ISO 8601 date or datetime, inclusive")
     read.add_argument("--from-user", help="@username or numeric id of the sender")
     read.add_argument("--media-only", action="store_true", help="only messages with an attachment")
     read.add_argument(
@@ -119,7 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     download = commands.add_parser("download", help="download one message attachment")
     download.add_argument("chat", help="t.me link, @username or numeric id")
-    download.add_argument("message_id", type=positive_integer)
+    download.add_argument(
+        "message_id", type=positive_integer, help="the message carrying the attachment"
+    )
     download.add_argument(
         "--dest-dir", dest="dest_dir", help="directory under the output root"
     )
@@ -167,6 +172,7 @@ async def dispatch(arguments: argparse.Namespace, application: TelegramApplicati
             chat=arguments.chat,
             root_message_id=arguments.root_message_id,
             limit=arguments.limit,
+            min_id=arguments.min_id,
         )
     if command == "read":
         return await application.read(

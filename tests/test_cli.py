@@ -481,6 +481,7 @@ def _options_for(command: str) -> set[str]:
     [
         ("read", ["read", "@alpha", "--limit", "2"], True),
         ("search", ["search", "anything", "--chat", "@alpha", "--limit", "2"], True),
+        ("thread", ["thread", "@alpha", "10", "--limit", "1"], True),
         ("dialogs", ["dialogs"], False),
     ],
 )
@@ -490,7 +491,12 @@ def test_notes_only_advertise_options_the_parser_accepts(
     """A note is an instruction the agent executes next. The removed protocol surface
     named its arguments `min_id=` and `out_path=`; the CLI accepts neither, so a
     note carried over from that spelling sends the agent straight into exit 2."""
-    code, captured, _ = _invoke(capsys, tmp_path, argv, FakeGateway())
+    gateway = FakeGateway()
+    if command == "thread":
+        gateway.rows = [
+            {"id": i, "text": f"r{i}", "reply_to": {"thread_id": 10}} for i in range(11, 21)
+        ]
+    code, captured, _ = _invoke(capsys, tmp_path, argv, gateway)
 
     assert code == 0
     payload = json.loads(captured.out)

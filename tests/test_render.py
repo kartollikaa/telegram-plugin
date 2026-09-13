@@ -158,7 +158,17 @@ def test_an_empty_result_distinguishes_a_filter_from_an_empty_range():
 def test_a_truncated_scan_says_so():
     env = envelope([], has_more=False, next_cursor=None, scanned=20000, scan_truncated=True)
     assert "20000" in env["note"]
-    assert "narrow the range" in env["note"]
+    assert "narrow the range" in env["note"].lower()
+
+
+def test_a_truncated_scan_never_claims_the_range_is_exhausted():
+    """Saying "nothing left in this range" and "the scan stopped early" in one note
+    tells the agent both that it is done and that it is not."""
+    env = envelope(
+        [{"id": 1}], has_more=False, next_cursor=None, scanned=20000, scan_truncated=True
+    )
+    assert "nothing left" not in env["note"]
+    assert "more may exist" in env["note"]
 
 
 def test_display_names_are_truncated_like_message_text():
@@ -275,3 +285,41 @@ def test_a_real_photo_reports_its_largest_rendition():
         dc_id=1,
     )
     assert _describe_media(MessageMediaPhoto(photo=photo))["size"] == 5678
+
+
+def test_a_progressive_photo_reports_its_true_largest_rendition():
+    """The biggest rendition of a modern photo is a `PhotoSizeProgressive`, which
+    has `sizes: list[int]` and no `size`. Reading only `.size` under-reports it by
+    an order of magnitude while looking perfectly plausible."""
+    import datetime
+
+    from telethon.tl.types import (
+        MessageMediaPhoto,
+        Photo,
+        PhotoSize,
+        PhotoSizeProgressive,
+        PhotoStrippedSize,
+    )
+
+    from telegram_plugin.render import _describe_media
+
+    photo = Photo(
+        id=1,
+        access_hash=1,
+        file_reference=b"",
+        date=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+        dc_id=1,
+        sizes=[
+            PhotoStrippedSize(type="i", bytes=b"x"),
+            PhotoSize(type="m", w=320, h=320, size=12000),
+            PhotoSizeProgressive(type="y", w=1280, h=1280, sizes=[5000, 40000, 250000]),
+        ],
+    )
+    assert _describe_media(MessageMediaPhoto(photo=photo))["size"] == 250000
+
+
+def test_a_zero_byte_attachment_reports_zero_not_unknown():
+    from telegram_plugin.render import _describe_media
+
+    described = _describe_media(_real_document("empty.txt", mime="text/plain", size=0))
+    assert described["size"] == 0, "`or` chains read a real zero as 'unknown'"

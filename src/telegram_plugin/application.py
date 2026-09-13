@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from telegram_plugin.client import DIALOG_SCAN_CAP, Batch, TelegramGateway
 from telegram_plugin.config import Config
-from telegram_plugin.errors import EmptyMessage, SendDisabled
+from telegram_plugin.errors import EmptyMessage, InvalidTimestamp, SendDisabled
 from telegram_plugin.jsonl import write_jsonl
 from telegram_plugin.matching import rank_dialogs
 from telegram_plugin.paging import paginate
@@ -117,11 +117,13 @@ class TelegramApplication:
         chat: str,
         root_message_id: int,
         limit: int = DEFAULT_ITEMS,
+        min_id: int | None = None,
     ) -> dict:
         batch = await self.gateway.thread(
             parse_chat_ref(chat),
             root_message_id,
             limit + 1,
+            min_id,
         )
         return _thread_envelope(batch, limit)
 
@@ -208,7 +210,12 @@ def _thread_envelope(batch: Batch, limit: int) -> dict:
 
 
 def _moment(text: str | None) -> datetime | None:
+    """A typo in a date is ordinary input, not an unclassified failure: letting
+    ValueError escape reported it as `unexpected_error` with a raw Python message."""
     if not text:
         return None
-    parsed = datetime.fromisoformat(text)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise InvalidTimestamp(text) from None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

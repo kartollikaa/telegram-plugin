@@ -120,7 +120,9 @@ async def test_telethon_thread_uses_reply_filter_and_sorts_ascending(tmp_path):
 
     batch = await gateway.thread(REF, root_message_id=10, limit=2)
 
-    assert client.thread_calls == [{"reply_to": 10, "limit": 2, "reverse": True}]
+    assert client.thread_calls == [
+        {"reply_to": 10, "limit": 2, "min_id": 0, "reverse": True}
+    ]
     assert [row["id"] for row in batch.rows] == [11, 14]
     assert batch.scanned == 2
 

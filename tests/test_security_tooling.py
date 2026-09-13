@@ -102,7 +102,7 @@ EXPECTED_COMMANDS: dict[str, tuple[list[str], list[str]]] = {
     "find-chat": (["--limit"], ["query"]),
     "resolve": ([], ["chat"]),
     "message": ([], ["chat", "message_id"]),
-    "thread": (["--limit"], ["chat", "root_message_id"]),
+    "thread": (["--limit", "--min-id"], ["chat", "root_message_id"]),
     "read": (
         [
             "--from-user",
