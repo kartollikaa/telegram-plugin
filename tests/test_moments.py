@@ -10,8 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from telegram_plugin.config import load_config
-from telegram_plugin.server import _moment, build_server
+from telegram_plugin.application import _moment
 from tests.fakes import FakeGateway
 
 
@@ -27,7 +26,7 @@ class LikePython310(datetime):
 
 @pytest.fixture
 def python_310(monkeypatch):
-    monkeypatch.setattr("telegram_plugin.server.datetime", LikePython310)
+    monkeypatch.setattr("telegram_plugin.application.datetime", LikePython310)
 
 
 @pytest.mark.parametrize(
@@ -63,22 +62,36 @@ def test_a_naive_timestamp_is_read_as_utc(python_310):
     assert _moment("2026-01-31T09:00:00").tzinfo == timezone.utc
 
 
-async def test_an_unreadable_date_names_the_forms_that_work():
-    server = build_server(load_config({"HOME": "/tmp"}), FakeGateway())
-    result = await server.call_tool(
-        "read_messages", {"chat": "@somechannel", "since": "yesterday"}
+def test_an_unreadable_date_names_the_forms_that_work(capsys, tmp_path):
+    """The CLI reports it as a branchable code, not a raw ValueError."""
+    from telegram_plugin.cli import main
+
+    code = main(
+        ["read", "@somechannel", "--since", "yesterday"],
+        environment={"HOME": str(tmp_path), "TELEGRAM_OUTPUT_ROOT": str(tmp_path / "o")},
+        gateway_factory=lambda _config: FakeGateway(),
     )
-    error = json.loads(result.content[0].text)["error"]
-    assert "yesterday" in error
-    assert "2026-01-31T09:00:00Z" in error
-    assert "ValueError" not in error
-    assert "Traceback" not in error
+    payload = json.loads(capsys.readouterr().out)["error"]
+    assert code == 1
+    assert payload["code"] == "invalid_timestamp"
+    assert "yesterday" in payload["message"]
+    assert "ISO 8601" in payload["message"]
+    assert "ValueError" not in payload["message"]
+    assert "Traceback" not in payload["message"]
 
 
-async def test_the_schema_tells_the_model_which_spellings_are_accepted():
+def test_the_help_tells_the_model_which_spellings_are_accepted():
     """Nothing else steers it away from the one form the floor cannot parse."""
-    server = build_server(load_config({"HOME": "/tmp"}), FakeGateway())
-    tools = {tool.name: tool for tool in await server.list_tools()}
-    properties = tools["read_messages"].input_schema["properties"]
+    from telegram_plugin.cli import build_parser
+
+    commands = next(
+        action.choices
+        for action in build_parser()._actions
+        if getattr(action, "choices", None)
+    )
+    helps = {
+        action.dest: action.help or ""
+        for action in commands["read"]._actions
+    }
     for field in ("since", "until"):
-        assert "ISO 8601" in properties[field]["description"], field
+        assert "ISO 8601" in helps[field], field

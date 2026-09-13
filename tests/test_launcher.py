@@ -1,45 +1,74 @@
 """The launcher is shell, so these tests actually run it."""
 
-import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-LAUNCHER = REPO / "bin" / "telegram-mcp"
-
-INITIALIZE = (
-    json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "0"},
-            },
-        }
-    )
-    + "\n"
-)
+CLI_LAUNCHER = REPO / "bin" / "telegram"
 
 
 def _run(state_dir: Path) -> subprocess.CompletedProcess:
+    return _run_cli(state_dir, "--help")
+
+
+def _run_cli(state_dir: Path, *arguments: str) -> subprocess.CompletedProcess:
     environment = {**os.environ, "TELEGRAM_STATE_DIR": str(state_dir)}
     environment.pop("TELEGRAM_PLUGIN_PYTHON", None)
     return subprocess.run(
-        [str(LAUNCHER)],
-        input=INITIALIZE,
+        [str(CLI_LAUNCHER), *arguments],
         capture_output=True,
         text=True,
         env=environment,
         timeout=600,
         check=False,
     )
+
+
+def test_cli_launcher_bootstraps_once_without_stdout_noise(tmp_path):
+    before = _worktree_state()
+
+    first = _run_cli(tmp_path, "--help")
+    second = _run_cli(tmp_path, "--help")
+
+    assert first.returncode == 0
+    assert first.stdout.startswith("usage: telegram")
+    assert "installing dependencies" not in first.stdout.lower()
+    assert "installing dependencies" in first.stderr.lower()
+    assert second.returncode == 0
+    assert "installing dependencies" not in second.stderr.lower()
+    assert (tmp_path / "venv" / "bin" / "python").exists()
+    assert _worktree_state() == before
+
+
+def test_cli_launcher_keeps_all_bootstrap_output_off_stdout(tmp_path):
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3"
+    fake_python.write_text("#!/bin/sh\necho bootstrap-marker\nexit 1\n")
+    fake_python.chmod(0o755)
+    state = tmp_path / "state"
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "TELEGRAM_STATE_DIR": str(state),
+    }
+    environment.pop("TELEGRAM_PLUGIN_PYTHON", None)
+
+    result = subprocess.run(
+        [str(CLI_LAUNCHER), "--help"],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "bootstrap-marker" in result.stderr
 
 
 def _worktree_state() -> str:
@@ -60,11 +89,13 @@ def first_run(tmp_path_factory):
     return state, result, before
 
 
-def test_stdout_is_pure_jsonrpc_even_on_the_installing_run(first_run):
+def test_stdout_is_pure_program_output_even_on_the_installing_run(first_run):
+    """The install runs on the same invocation that must return parseable output;
+    a single pip line on stdout would be indistinguishable from a bad result."""
     _, result, _ = first_run
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    assert lines, f"nothing on stdout; stderr was: {result.stderr[-2000:]}"
-    assert json.loads(lines[0])["jsonrpc"] == "2.0"
+    assert result.returncode == 0, f"stderr was: {result.stderr[-2000:]}"
+    assert result.stdout.startswith("usage: telegram")
+    assert "installing dependencies" not in result.stdout.lower()
 
 
 def test_the_installer_reported_itself_on_stderr(first_run):
@@ -78,8 +109,11 @@ def test_venv_is_built_under_the_state_directory(first_run):
 
 
 def test_no_half_installed_environment_is_left_behind(first_run):
+    """The staging directory comes from `mktemp -d "$STATE/venv.XXXXXX"`, so it is
+    never literally `venv.tmp`; asserting that name proved nothing."""
     state, _, _ = first_run
-    assert not (state / "venv.tmp").exists()
+    leftovers = [path.name for path in state.glob("venv.*") if path.is_dir()]
+    assert leftovers == [], leftovers
 
 
 def test_the_plugin_directory_is_not_written_to(first_run):
@@ -108,8 +142,7 @@ def test_an_interpreter_without_the_dependencies_is_refused_not_worked_around(tm
         "TELEGRAM_PLUGIN_PYTHON": "/usr/bin/python3",
     }
     result = subprocess.run(
-        [str(LAUNCHER)],
-        input=INITIALIZE,
+        [str(CLI_LAUNCHER), "--help"],
         capture_output=True,
         text=True,
         env=environment,
@@ -117,45 +150,9 @@ def test_an_interpreter_without_the_dependencies_is_refused_not_worked_around(tm
         check=False,
     )
     assert result.returncode != 0
-    assert "cannot import telethon and mcp" in result.stderr
-    assert "older than 1.42" in result.stderr
+    assert "cannot import telethon" in result.stderr
     assert "pip install" in result.stderr
     assert not (tmp_path / "venv").exists(), "it must not build a venv behind the override"
-
-
-def test_an_interpreter_with_too_old_a_telethon_is_refused(tmp_path):
-    """The path-confinement guarantee rests on telethon >= 1.42, and the override is a
-    documented way to hand the plugin any interpreter at all — importing is not enough."""
-    stubs = tmp_path / "stubs"
-    (stubs / "telethon").mkdir(parents=True)
-    (stubs / "telethon" / "__init__.py").write_text('__version__ = "1.30.0"\n')
-    (stubs / "mcp").mkdir()
-    (stubs / "mcp" / "__init__.py").write_text("")
-    interpreter = tmp_path / "python"
-    interpreter.write_text(f'#!/bin/sh\nPYTHONPATH="{stubs}" exec "{sys.executable}" "$@"\n')
-    interpreter.chmod(0o755)
-
-    # Positive control: this interpreter really does satisfy the old import-only check.
-    assert subprocess.run(
-        [str(interpreter), "-c", "import telethon, mcp; assert telethon.__version__ == '1.30.0'"],
-        check=False,
-    ).returncode == 0
-
-    result = subprocess.run(
-        [str(LAUNCHER)],
-        input=INITIALIZE,
-        capture_output=True,
-        text=True,
-        env={
-            **os.environ,
-            "TELEGRAM_STATE_DIR": str(tmp_path / "state"),
-            "TELEGRAM_PLUGIN_PYTHON": str(interpreter),
-        },
-        timeout=120,
-        check=False,
-    )
-    assert result.returncode != 0
-    assert "older than 1.42" in result.stderr
 
 
 def test_it_refuses_to_delete_something_that_is_not_its_own_venv(tmp_path):
@@ -177,7 +174,7 @@ def own_state(tmp_path_factory):
 
 def test_a_wiped_site_packages_is_reinstalled_despite_a_matching_stamp(own_state):
     site = next((own_state / "venv" / "lib").glob("python*")) / "site-packages"
-    for package in ("telethon", "mcp"):
+    for package in ("telethon",):
         for path in site.glob(f"{package}*"):
             subprocess.run(["rm", "-rf", str(path)], check=True)
     stamp = own_state / "venv" / ".deps-stamp"
@@ -185,5 +182,5 @@ def test_a_wiped_site_packages_is_reinstalled_despite_a_matching_stamp(own_state
 
     again = _run(own_state)
     assert "installing dependencies" in again.stderr.lower()
-    lines = [line for line in again.stdout.splitlines() if line.strip()]
-    assert json.loads(lines[0])["jsonrpc"] == "2.0"
+    assert again.returncode == 0
+    assert again.stdout.startswith("usage: telegram")

@@ -8,24 +8,33 @@ LOGIN_HINT = "Session is not authorised — run bin/telegram-login in a terminal
 
 
 class TelegramPluginError(Exception):
-    pass
+    code = "telegram_error"
+    retryable = False
 
 
 class NotAuthorized(TelegramPluginError):
+    code = "not_authorized"
+
     def __init__(self) -> None:
         super().__init__(LOGIN_HINT)
 
 
 class SessionLocked(TelegramPluginError):
+    code = "session_busy"
+    retryable = True
+
     def __init__(self, path: str) -> None:
         super().__init__(
             f"The session at {path} is held by another process — Telegram revokes an auth key "
-            "used by two clients at once, so this server refuses to share it. Stop the other "
-            "client, or point TELEGRAM_STATE_DIR at a separate state directory with its own login."
+            "used by two clients at once, so this command refuses to share it. Let the other "
+            "one finish, or point TELEGRAM_STATE_DIR at a separate state directory with its "
+            "own login."
         )
 
 
 class MissingCredentials(TelegramPluginError):
+    code = "missing_credentials"
+
     def __init__(self) -> None:
         super().__init__(
             "TELEGRAM_API_ID and TELEGRAM_API_HASH are not set — get them from "
@@ -35,6 +44,8 @@ class MissingCredentials(TelegramPluginError):
 
 
 class UnsafePath(TelegramPluginError):
+    code = "unsafe_path"
+
     def __init__(self, candidate: str, root: str) -> None:
         super().__init__(
             f"Refusing to write to {candidate}: output must stay inside the configured "
@@ -43,20 +54,13 @@ class UnsafePath(TelegramPluginError):
 
 
 class NotAMember(TelegramPluginError):
+    code = "not_a_member"
+
     def __init__(self, title: str) -> None:
         super().__init__(
             f"The invite for {title} is valid, but this account is not a member, so the history "
             "cannot be read. This plugin never joins a chat on its own — join it in a Telegram "
             "client first, then retry."
-        )
-
-
-class BadMoment(TelegramPluginError):
-    def __init__(self, text: str) -> None:
-        super().__init__(
-            f"Cannot read {text!r} as a date. Use an ISO 8601 date or timestamp: 2026-01-31, "
-            "2026-01-31T09:00:00Z, or 2026-01-31T09:00:00+03:00. A timestamp without a zone "
-            "is read as UTC."
         )
 
 
@@ -70,11 +74,22 @@ class EscapedOutput(TelegramPluginError):
 
 
 class NoSuchMedia(TelegramPluginError):
+    code = "no_such_media"
+
     def __init__(self, message_id: int) -> None:
         super().__init__(f"Message {message_id} carries no downloadable media.")
 
 
+class MessageNotFound(TelegramPluginError):
+    code = "message_not_found"
+
+    def __init__(self, message_id: int) -> None:
+        super().__init__(f"Message {message_id} was not found in that chat.")
+
+
 class MediaTooLarge(TelegramPluginError):
+    code = "media_too_large"
+
     def __init__(self, size: int, cap: int) -> None:
         super().__init__(
             f"That attachment is {size} bytes and the ceiling is {cap}. Nothing was "
@@ -83,11 +98,40 @@ class MediaTooLarge(TelegramPluginError):
         )
 
 
-class SendLimitReached(TelegramPluginError):
-    def __init__(self, limit: int) -> None:
+class SendDisabled(TelegramPluginError):
+    code = "send_disabled"
+
+    def __init__(self) -> None:
         super().__init__(
-            f"This server process has already sent {limit} messages, which is its ceiling. "
-            "Restart the session if the operator genuinely wants to send more."
+            "Sending is disabled. Set TELEGRAM_PLUGIN_ALLOW_SEND=1 in the plugin state "
+            "directory's .env only when the operator wants this account to send messages."
+        )
+
+
+class InvalidTimestamp(TelegramPluginError):
+    code = "invalid_timestamp"
+
+    def __init__(self, value: str) -> None:
+        super().__init__(
+            f"Cannot read {value!r} as a time. Use ISO 8601: 2026-09-13, "
+            "2026-09-13T14:30, or 2026-09-13T14:30:00+03:00."
+        )
+
+
+class EmptyMessage(TelegramPluginError):
+    code = "empty_text"
+
+    def __init__(self) -> None:
+        super().__init__("Refusing to send an empty text message.")
+
+
+class UnsafeInputPath(TelegramPluginError):
+    code = "unsafe_path"
+
+    def __init__(self, candidate: str, root: str) -> None:
+        super().__init__(
+            f"Refusing to read {candidate}: the text file must be a regular non-symlink file "
+            f"inside the configured output directory {root}."
         )
 
 

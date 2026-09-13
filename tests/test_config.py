@@ -54,28 +54,12 @@ def test_an_unset_variable_still_comes_from_the_file():
     assert cfg.allow_send is True
 
 
-def test_a_ceiling_of_zero_is_honoured_rather_than_replaced_by_the_default():
-    cfg = load_config({"TELEGRAM_PLUGIN_SEND_LIMIT": "0", "TELEGRAM_MAX_DOWNLOAD_BYTES": "0"})
-    assert cfg.send_limit == 0
-    assert cfg.max_download_bytes == 0
-
-
-def test_a_negative_ceiling_clamps_to_the_strictest_rather_than_the_loosest():
-    assert load_config({"TELEGRAM_PLUGIN_SEND_LIMIT": "-5"}).send_limit == 0
-
-
 def test_an_unreadable_ceiling_defaults_and_is_named():
     from telegram_plugin.config import DEFAULT_MAX_DOWNLOAD_BYTES
-    from telegram_plugin.log import config_summary
 
     cfg = load_config({"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "10MB"})
     assert cfg.max_download_bytes == DEFAULT_MAX_DOWNLOAD_BYTES
     assert cfg.unreadable == ("TELEGRAM_MAX_DOWNLOAD_BYTES",)
-    assert "TELEGRAM_MAX_DOWNLOAD_BYTES" in config_summary(cfg)
-
-
-def test_a_readable_configuration_names_nothing():
-    assert load_config({"HOME": "/tmp", "TELEGRAM_PLUGIN_SEND_LIMIT": "3"}).unreadable == ()
 
 
 def test_the_launcher_and_the_package_agree_on_the_telethon_floor():
@@ -87,6 +71,21 @@ def test_the_launcher_and_the_package_agree_on_the_telethon_floor():
 
     declared = re.search(r"telethon>=(\d+)\.(\d+)", " ".join(DEPENDENCIES))
     assert (int(declared[1]), int(declared[2])) == MIN_TELETHON
-    launcher = (Path(__file__).resolve().parents[1] / "bin/telegram-mcp").read_text()
+    launcher = (Path(__file__).resolve().parents[1] / "bin/telegram").read_text()
     assert f"({MIN_TELETHON[0]}, {MIN_TELETHON[1]})" in launcher
     assert f'MIN_TELETHON="{MIN_TELETHON[0]}.{MIN_TELETHON[1]}"' in launcher
+
+
+def test_a_ceiling_of_zero_is_honoured_rather_than_replaced_by_the_default():
+    """The strictest setting must be reachable: `or DEFAULT` read 0 as "unset"."""
+    assert load_config({"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "0"}).max_download_bytes == 0
+
+
+def test_a_negative_ceiling_clamps_to_the_strictest_rather_than_the_loosest():
+    assert load_config(
+        {"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "-5"}
+    ).max_download_bytes == 0
+
+
+def test_a_readable_configuration_names_nothing():
+    assert load_config({"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "1024"}).unreadable == ()

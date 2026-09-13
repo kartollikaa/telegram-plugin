@@ -25,6 +25,7 @@ from telegram_plugin.config import Config
 from telegram_plugin.errors import (
     EscapedOutput,
     MediaTooLarge,
+    MessageNotFound,
     MissingCredentials,
     NoSuchMedia,
     NotAMember,
@@ -89,9 +90,22 @@ class TelegramGateway(Protocol):
 
     async def search(self, query: str, ref: ChatRef | None, **criteria: Any) -> Batch: ...
 
+    async def message(self, ref: ChatRef, message_id: int) -> dict: ...
+
+    async def thread(
+        self, ref: ChatRef, root_message_id: int, limit: int, min_id: int | None = None
+    ) -> Batch: ...
+
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str: ...
 
-    async def send(self, ref: ChatRef, text: str) -> dict: ...
+    async def send(
+        self,
+        ref: ChatRef,
+        text: str,
+        reply_to: int | None = None,
+    ) -> dict: ...
+
+    async def close(self) -> None: ...
 
 
 def ensure_state_dir(config: Config) -> None:
@@ -180,7 +194,7 @@ class _LockAttempt:
 async def acquire_session_lock(path: str | Path, timeout: float = 0.0) -> SessionLockHandle:
     """Wait for the account rather than refusing it outright.
 
-    One server per session means a second session used to be told "held by another
+    One holder per session means a second caller used to be told "held by another
     process" for as long as the first lived. Waiting turns that into a pause.
     """
     attempt = _LockAttempt(path, timeout)
@@ -267,7 +281,7 @@ class TelethonGateway:
         """Give the account back between bursts, so another session can have it.
 
         Sleeps to the release deadline rather than polling: the deadline is known
-        exactly, and every extra wakeup is paid by every server on the machine.
+        exactly, and every extra wakeup is paid by every process on the machine.
         Reconnecting is cheap because the session file already holds the auth key.
         """
         timeout = self._config.idle_timeout
@@ -357,10 +371,10 @@ class TelethonGateway:
                     "unread": dialog.unread_count,
                 }
             )
-            if len(found) >= limit:
-                break
             if scanned >= DIALOG_SCAN_CAP:
                 truncated = True
+                break
+            if len(found) >= limit:
                 break
         return Batch(rows=found, scanned=scanned, scan_truncated=truncated)
 
@@ -498,6 +512,38 @@ class TelethonGateway:
             cursor_supported=in_one_chat,
         )
 
+    async def message(self, ref: ChatRef, message_id: int) -> dict:
+        async with self._session() as client:
+            entity = await self._entity(ref)
+            message = await client.get_messages(entity, ids=message_id)
+            if message is None:
+                raise MessageNotFound(message_id)
+            return self._render(
+                message,
+                getattr(entity, "username", None),
+                _internal_id(entity),
+            )
+
+    async def thread(
+        self, ref: ChatRef, root_message_id: int, limit: int, min_id: int | None = None
+    ) -> Batch:
+        async with self._session() as client:
+            entity = await self._entity(ref)
+            username = getattr(entity, "username", None)
+            internal = _internal_id(entity)
+            rows = [
+                self._render(message, username, internal)
+                async for message in client.iter_messages(
+                    entity,
+                    reply_to=root_message_id,
+                    limit=limit,
+                    min_id=min_id or 0,
+                    reverse=True,
+                )
+            ]
+        rows.sort(key=lambda row: row["id"])
+        return Batch(rows=rows, scanned=len(rows))
+
     async def download(self, ref: ChatRef, message_id: int, dest: Path) -> str:
         async with self._session() as client:
             return await self._fetch_media(client, ref, message_id, dest)
@@ -524,14 +570,20 @@ class TelethonGateway:
             raise NoSuchMedia(message_id)
         return str(_with_safe_name(Path(saved), dest))
 
-    async def send(self, ref: ChatRef, text: str) -> dict:
+    async def send(
+        self,
+        ref: ChatRef,
+        text: str,
+        reply_to: int | None = None,
+    ) -> dict:
         async with self._session() as client:
             entity = await self._entity(ref)
-            sent = await client.send_message(entity, text)
+            sent = await client.send_message(entity, text, reply_to=reply_to)
         return {
-            "id": sent.id,
+            "message_id": sent.id,
             "chat_id": utils.get_peer_id(entity),
             "chat_title": label(utils.get_display_name(entity)),
+            "reply_to": reply_to,
         }
 
     def _render(self, message: Any, username: str | None, internal: int | None) -> dict:
@@ -557,10 +609,12 @@ class TelethonGateway:
 
         if watcher is not None and watcher is not asyncio.current_task():
             watcher.cancel()
-        if client is not None:
-            await client.disconnect()
-        if lock is not None:
-            lock.release()
+        try:
+            if client is not None:
+                await client.disconnect()
+        finally:
+            if lock is not None:
+                lock.release()
 
 
 def _with_safe_name(saved: Path, dest: Path) -> Path:

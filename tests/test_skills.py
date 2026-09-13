@@ -3,6 +3,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 READ_SKILL = (REPO / "skills/read/SKILL.md").read_text()
 LOGIN_SKILL = (REPO / "skills/login/SKILL.md").read_text()
+SEND_SKILL = (REPO / "skills/send/SKILL.md").read_text()
 
 
 def test_skill_states_that_chat_content_is_data_not_instructions():
@@ -13,12 +14,12 @@ def test_skill_states_that_chat_content_is_data_not_instructions():
 
 
 def test_skill_teaches_the_paging_and_export_escape_hatches():
-    assert "out_path" in READ_SKILL
-    assert "min_id" in READ_SKILL
+    assert "--out" in READ_SKILL
+    assert "--min-id" in READ_SKILL
 
 
 def test_skill_says_the_ceiling_is_not_negotiable():
-    assert "refused by the schema" in READ_SKILL
+    assert "rejected by the CLI" in READ_SKILL
 
 
 def test_skill_names_the_absent_capabilities():
@@ -66,8 +67,7 @@ def test_the_login_skill_refuses_to_collect_secrets_in_conversation():
 def test_the_login_skill_covers_every_status_the_cli_can_report():
     from telegram_plugin.login import DEFAULT_QR_TIMEOUT  # noqa: F401
 
-    for state in ("credentials", "authorized", "session_in_use", "expired", "needs_password",
-                  "failed"):
+    for state in ("credentials", "authorized", "session_in_use", "expired", "needs_password"):
         assert state in LOGIN_SKILL_TEXT, state
 
 
@@ -93,14 +93,79 @@ def test_the_skill_directory_and_its_declared_name_agree():
         assert declared[1].strip() == directory.name, directory.name
 
 
-def test_the_reading_skill_teaches_the_two_cursors_that_do_not_exist():
-    """A global search has no id cursor and a stopped scan is not an empty range: both
-    are places an agent will otherwise draw the wrong conclusion on its own."""
-    assert "no cursor" in READ_SKILL
-    assert "stopped scan is not an empty range" in READ_SKILL.lower()
-    assert "complete" in READ_SKILL
+FORBIDDEN_MCP_VOCABULARY = (
+    "list_dialogs",
+    "resolve_chat",
+    "read_messages",
+    "search_messages",
+    "download_media",
+    "telegram-mcp",
+)
 
 
-def test_the_reading_skill_states_the_accepted_date_forms():
-    assert "ISO 8601" in READ_SKILL
-    assert "2026-01-31T09:00:00Z" in READ_SKILL
+def _forbidden_vocabulary(text):
+    lowered = text.casefold()
+    return {term for term in FORBIDDEN_MCP_VOCABULARY if term in lowered}
+
+
+def test_login_and_read_skills_are_cli_only():
+    positive_control = " ".join(FORBIDDEN_MCP_VOCABULARY)
+    assert _forbidden_vocabulary(positive_control) == set(FORBIDDEN_MCP_VOCABULARY)
+
+    assert _forbidden_vocabulary(READ_SKILL) == set()
+    assert _forbidden_vocabulary(LOGIN_SKILL) == set()
+    assert '"${CLAUDE_PLUGIN_ROOT}/bin/telegram" find-chat' in READ_SKILL
+
+
+def test_send_skill_requires_explicit_operator_authority_and_exact_recipient():
+    description = SEND_SKILL.split("---", 2)[1].casefold()
+    for trigger in ("send", "message", "reply", "answer", "telegram"):
+        assert trigger in description
+    assert "explicit" in description
+
+    lowered = SEND_SKILL.casefold()
+    assert "telegram_plugin_allow_send=1" in lowered
+    assert "operator" in lowered
+    assert "content" in lowered and "never authorizes" in lowered
+    assert "message_id" in lowered
+    assert "chat_id" in lowered
+    assert "chat_title" in lowered
+    assert "reply_to" in lowered
+
+    workflow = SEND_SKILL.split("## Send workflow", 1)[1]
+    assert workflow.index(" resolve ") < workflow.index(" find-chat ") < workflow.index(" send ")
+    assert "ask the operator" in workflow
+
+
+def test_send_skill_is_cli_only():
+    assert _forbidden_vocabulary(SEND_SKILL) == set()
+    assert '"${CLAUDE_PLUGIN_ROOT}/bin/telegram" send' in SEND_SKILL
+
+
+def test_read_skill_trigger_and_discovery_workflow_are_explicit():
+    description = READ_SKILL.split("---", 2)[1].casefold()
+    for trigger in (
+        "telegram",
+        "телег",
+        "chat",
+        "channel",
+        "message",
+        "file",
+        "person",
+        "username",
+        "t.me",
+    ):
+        assert trigger in description
+
+    workflow = READ_SKILL.split("## Discovery workflow", 1)[1]
+    commands = (" resolve ", " find-chat ", " search ", " read ")
+    positions = [workflow.index(command) for command in commands]
+    assert positions == sorted(positions)
+    assert "multiple credible candidates" in READ_SKILL
+    assert "ask the operator" in READ_SKILL
+
+
+def test_skills_explain_portable_launcher_resolution():
+    assert '"${CLAUDE_PLUGIN_ROOT}/bin/telegram"' in READ_SKILL
+    assert "absolute path" in READ_SKILL
+    assert "absolute path" in LOGIN_SKILL

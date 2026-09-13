@@ -1,16 +1,10 @@
 #!/bin/sh
-# Universal entry point: any MCP host can point at this file.
-#
-# Stdout is the MCP channel and must carry nothing else, so we stash the real
-# stdout on fd 3 and route our own chatter — including pip's — to stderr. Every
-# subprocess is started with fd 3 closed, so nothing it does can reach the
-# protocol channel either.
 exec 3>&1 1>&2
 set -e
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
-DEPS="telethon>=1.42,<2 mcp>=2,<3"
+DEPS="telethon>=1.42,<2"
 
 mkdir -p "$STATE"
 chmod 700 "$STATE"
@@ -29,8 +23,6 @@ digest() {
     fi
 }
 
-# The plugin version is part of the stamp: an update should re-resolve
-# dependencies, otherwise a machine keeps whatever it first installed for ever.
 VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)
 WANTED=$(digest "$DEPS|$VERSION")
 
@@ -39,7 +31,7 @@ WANTED=$(digest "$DEPS|$VERSION")
 # the version here is what makes that hold for TELEGRAM_PLUGIN_PYTHON too.
 MIN_TELETHON="1.42"
 has_dependencies() {
-    "$1" -c 'import re, sys, telethon, mcp; m = re.match(r"(\d+)\.(\d+)", telethon.__version__); sys.exit(0 if m and (int(m.group(1)), int(m.group(2))) >= (1, 42) else 1)' >/dev/null 2>&1 3>&-
+    "$1" -c 'import re, sys, telethon; m = re.match(r"(\d+)\.(\d+)", telethon.__version__); sys.exit(0 if m and (int(m.group(1)), int(m.group(2))) >= (1, 42) else 1)' >/dev/null 2>&1 3>&-
 }
 
 refuse_to_delete_a_non_venv() {
@@ -48,6 +40,15 @@ refuse_to_delete_a_non_venv() {
         echo "[telegram-plugin] virtualenv this plugin created. Check TELEGRAM_STATE_DIR." >&2
         exit 1
     fi
+}
+
+cleanup_install() {
+    # The staging venv is ~27MB. Every exit after mktemp but before the mv --
+    # a failed pip, or the refusal to delete a non-venv -- used to leak one.
+    if [ -n "${STAGE:-}" ] && [ -d "$STAGE" ]; then
+        rm -rf "$STAGE"
+    fi
+    rmdir "$LOCKDIR" 2>/dev/null || true
 }
 
 acquire_install_lock() {
@@ -61,20 +62,19 @@ acquire_install_lock() {
         fi
         sleep 1
     done
-    trap 'rmdir "$LOCKDIR" 2>/dev/null || true' EXIT INT TERM
+    trap cleanup_install EXIT INT TERM
 }
 
 install_into() {
-    "$1" -m pip install --quiet --disable-pip-version-check --upgrade pip 3>&-
-    # Word splitting is what we want here: DEPS is a list of requirements.
+    "$1" -m pip install --quiet --disable-pip-version-check --upgrade pip >&2 3>&-
     # shellcheck disable=SC2086
-    "$1" -m pip install --quiet --disable-pip-version-check $DEPS 3>&-
+    "$1" -m pip install --quiet --disable-pip-version-check $DEPS >&2 3>&-
 }
 
 if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
     PYTHON=$TELEGRAM_PLUGIN_PYTHON
     if ! has_dependencies "$PYTHON"; then
-        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon and mcp," >&2
+        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon," >&2
         echo "[telegram-plugin] or its telethon is older than $MIN_TELETHON." >&2
         echo "[telegram-plugin] Install them there:" >&2
         echo "[telegram-plugin]   $PYTHON -m pip install $DEPS" >&2
@@ -83,8 +83,6 @@ if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
     fi
 else
     PYTHON="$VENV/bin/python"
-    # Gate on behaviour as well as on the stamp: a wiped site-packages leaves both
-    # the interpreter and the stamp in place, and execing it would hang the host.
     if [ ! -x "$PYTHON" ] ||
         [ "$(cat "$STAMP" 2>/dev/null)" != "$WANTED" ] ||
         ! has_dependencies "$PYTHON"; then
@@ -116,4 +114,4 @@ fi
 PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONPATH
 
-exec "$PYTHON" -m telegram_plugin.server 1>&3 3>&-
+exec "$PYTHON" -m telegram_plugin.cli "$@" 1>&3 3>&-

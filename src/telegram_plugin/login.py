@@ -210,7 +210,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
 
 
 def _status_command(config: Config) -> int:
-    """A running server holding the session is itself an answer, not a failure."""
+    """Another command holding the session is itself an answer, not a failure."""
     try:
         # Deliberately not waiting: "someone is using it" is the status, and a
         # status command that blocks for twenty seconds is a worse answer.
@@ -221,9 +221,9 @@ def _status_command(config: Config) -> int:
         payload["authorized"] = "unknown"
         payload["session_in_use"] = True
         payload["hint"] = (
-            "another process holds this session — almost certainly the plugin's own MCP "
-            "server, which means a session exists. Stop that client to re-check whether it "
-            "is still authorised."
+            "another process holds this session — almost certainly another Telegram "
+            "command or agent, which means a session exists. Let it finish to re-check "
+            "whether the session is still authorised."
         )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
@@ -253,8 +253,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         # Taken before anything else, including the credentials check: if the
-        # server holds this session, logging in here would put two clients on one
-        # auth key and Telegram would revoke it. Waiting, because the server lets
+        # command holds this session, logging in here would put two clients on one
+        # auth key and Telegram would revoke it. Waiting, because the holder lets
         # go once it goes idle — refusing outright would send the operator hunting
         # a client that is about to release on its own.
         with session_lock(config.session_path, config.lock_wait):

@@ -24,6 +24,14 @@ jobs:
       - name: Tests
         run: python -m pytest -q
 
+      # The suite above already covers the manifests, the launchers and the absence
+      # guards. This checks only what pytest cannot: that the manifests are valid
+      # JSON to something other than the test that reads them.
+      - name: Manifests are well-formed JSON
+        run: |
+          python -c "import json; json.load(open('plugin.json'))"
+          python -c "import json; json.load(open('.claude-plugin/plugin.json'))"
+
   security:
     runs-on: ubuntu-latest
     steps:

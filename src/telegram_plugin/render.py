@@ -123,6 +123,11 @@ def _describe_media(message: Any) -> dict | None:
     }
 
 
+def _flag(cursor_field: str) -> str:
+    """`cursor_field` names a JSON key; the note has to name a CLI option."""
+    return "--" + cursor_field.replace("_", "-")
+
+
 def envelope(
     items: list[dict],
     *,
@@ -145,13 +150,13 @@ def envelope(
             left = "more available (the count in this range is not known without scanning it)"
         if next_cursor is not None:
             continuation = (
-                f"continue with {cursor_field}={next_cursor}, or pass out_path to write the "
-                "whole range to a JSONL file instead of into this conversation."
+                f"continue with {_flag(cursor_field)} {next_cursor}, or pass --out PATH to "
+                "write the whole range to a JSONL file instead of into this conversation."
             )
         else:
             continuation = no_cursor_hint or (
-                "pass out_path to write the whole range to a JSONL file instead of into this "
-                "conversation."
+                "pass --out PATH to write the whole range to a JSONL file instead of into "
+                "this conversation."
             )
         note = f"{len(items)} returned, {left} — {continuation}"
     elif items:

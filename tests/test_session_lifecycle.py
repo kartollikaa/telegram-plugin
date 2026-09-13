@@ -12,10 +12,12 @@ from types import SimpleNamespace
 import pytest
 from telethon.tl.types import User
 
+from telegram_plugin.cli import _run, build_parser
 from telegram_plugin.client import TelethonGateway, acquire_session_lock, session_lock
 from telegram_plugin.config import load_config
 from telegram_plugin.errors import SessionLocked
 from telegram_plugin.refs import parse_chat_ref
+from tests.fakes import FakeGateway
 
 REF = parse_chat_ref("@somechannel")
 
@@ -200,6 +202,39 @@ class BlockingDisconnectClient(CountingClient):
         await self.may_finish.wait()
 
 
+class FailingDisconnectClient(CountingClient):
+    async def disconnect(self):
+        self.disconnects += 1
+        raise RuntimeError("disconnect failed")
+
+
+async def test_a_disconnect_failure_still_releases_the_session_lock(tmp_path):
+    client = FailingDisconnectClient()
+    gateway, config = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="0")
+    await gateway.me()
+
+    with pytest.raises(RuntimeError, match="disconnect failed"):
+        await gateway.close()
+
+    with session_lock(config.session_path):
+        pass
+
+
+async def test_cancelling_disconnect_still_releases_the_session_lock(tmp_path):
+    client = BlockingDisconnectClient()
+    gateway, config = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="0")
+    await gateway.me()
+    closing = asyncio.create_task(gateway.close())
+    await client.disconnect_started.wait()
+
+    closing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+
+    with session_lock(config.session_path):
+        pass
+
+
 async def test_a_reconnect_during_close_still_ends_up_releasable(tmp_path):
     """Pins the ordering inside close() that makes this safe.
 
@@ -301,19 +336,41 @@ def test_a_negative_timeout_falls_back_instead_of_disabling_the_release():
     assert off.idle_timeout == 0.0, "zero stays a deliberate opt-out"
 
 
-async def test_the_server_hands_the_account_back_on_shutdown(tmp_path):
+async def test_the_cli_hands_the_account_back_when_the_command_ends(tmp_path):
     """Without this the process exits holding the account, and the operator's other
-    sessions keep being told it is busy by a server that no longer exists."""
-    from telegram_plugin.server import closing_lifespan
-
+    sessions keep being told it is busy by a process that no longer exists."""
     client = CountingClient()
     gateway, _ = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="30")
     await gateway.me()
     assert client.disconnects == 0
 
-    async with closing_lifespan(gateway)(None):
-        pass
+    arguments = build_parser().parse_args(["whoami"])
+    await _run(arguments, {"HOME": str(tmp_path)}, gateway_factory=lambda _config: gateway)
 
     assert client.disconnects == 1
     with session_lock(gateway._config.session_path):
         pass  # the lock came back with it
+
+
+async def test_cli_gateway_is_closed_on_cancellation(tmp_path):
+    class BlockingGateway(FakeGateway):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+
+        async def me(self):
+            self.started.set()
+            await asyncio.Event().wait()
+
+    gateway = BlockingGateway()
+    arguments = build_parser().parse_args(["whoami"])
+    task = asyncio.create_task(
+        _run(arguments, {"HOME": str(tmp_path)}, gateway_factory=lambda _config: gateway)
+    )
+    await gateway.started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert gateway.close_calls == 1

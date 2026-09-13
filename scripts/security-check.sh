@@ -55,7 +55,7 @@ rm -f "$audit_output"
 
 note "shellcheck — the shell entry points"
 if command -v shellcheck >/dev/null 2>&1; then
-    shellcheck bin/telegram-mcp bin/telegram-login scripts/*.sh || fail shellcheck
+    shellcheck bin/telegram bin/telegram-login scripts/*.sh || fail shellcheck
 elif [ -n "${CI:-}" ]; then
     echo "shellcheck is missing in CI, where it must always run" >&2
     fail shellcheck-missing
