@@ -147,3 +147,24 @@ async def test_telethon_send_forwards_reply_and_returns_actual_fields(tmp_path, 
         "chat_title": "Alpha",
         "reply_to": reply_to,
     }
+
+
+async def test_a_message_without_a_thread_is_a_domain_error_not_a_bug(tmp_path):
+    """Telegram answers `MsgIdInvalidError` for an ordinary message as readily as
+    for a missing one. Surfacing it raw reported a normal request as
+    `unexpected_error`, which the contract defines as "treat as a bug"."""
+    from telethon.errors import MsgIdInvalidError
+
+    from telegram_plugin.errors import NoThread
+
+    class NoRepliesClient(MessageClient):
+        async def iter_messages(self, entity, **criteria):
+            raise MsgIdInvalidError(request=None)
+            yield  # pragma: no cover - makes this an async generator
+
+    gateway = _telethon_gateway(tmp_path, NoRepliesClient())
+    with pytest.raises(NoThread) as excinfo:
+        await gateway.thread(parse_chat_ref("@alpha"), root_message_id=77, limit=5)
+    assert excinfo.value.code == "no_thread"
+    assert "77" in str(excinfo.value)
+    await gateway.close()

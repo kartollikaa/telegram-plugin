@@ -210,6 +210,7 @@ prose. The complete set:
 | `unknown_chat_ref` | the chat reference is not one of the accepted forms |
 | `not_a_member` | an invite link resolved, but the account has not joined |
 | `message_not_found` | no message with that id in that chat |
+| `no_thread` | that message is not a discussion root, so it has no replies |
 | `no_such_media` | that message carries no attachment |
 | `media_too_large` | the attachment exceeds `TELEGRAM_MAX_DOWNLOAD_BYTES` |
 | `unsafe_path` | a read or write path escaped the output root |

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from telethon import TelegramClient, utils
+from telethon.errors import MsgIdInvalidError
 from telethon.tl.functions.messages import CheckChatInviteRequest
 
 from telegram_plugin.config import Config
@@ -30,6 +31,7 @@ from telegram_plugin.errors import (
     NoSuchMedia,
     NotAMember,
     NotAuthorized,
+    NoThread,
     SessionLocked,
 )
 from telegram_plugin.refs import ChatRef
@@ -531,16 +533,22 @@ class TelethonGateway:
             entity = await self._entity(ref)
             username = getattr(entity, "username", None)
             internal = _internal_id(entity)
-            rows = [
-                self._render(message, username, internal)
-                async for message in client.iter_messages(
-                    entity,
-                    reply_to=root_message_id,
-                    limit=limit,
-                    min_id=min_id or 0,
-                    reverse=True,
-                )
-            ]
+            try:
+                rows = [
+                    self._render(message, username, internal)
+                    async for message in client.iter_messages(
+                        entity,
+                        reply_to=root_message_id,
+                        limit=limit,
+                        min_id=min_id or 0,
+                        reverse=True,
+                    )
+                ]
+            except MsgIdInvalidError:
+                # Telegram says this for an ordinary message as much as for a
+                # missing one: it is simply not a discussion root. Surfacing the
+                # raw error made a normal request look like a plugin bug.
+                raise NoThread(root_message_id) from None
         rows.sort(key=lambda row: row["id"])
         return Batch(rows=rows, scanned=len(rows))
 
