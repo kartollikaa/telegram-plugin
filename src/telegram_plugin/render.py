@@ -183,7 +183,10 @@ def envelope(
     # its limit, and the id to resume from is known whenever anything came back.
     continuable = has_more or (scan_truncated and bool(items))
     if continuable and next_cursor is None and items:
-        next_cursor = items[-1]["id"]
+        # Direction matters: a forward page resumes after its highest id, a
+        # backward one before its lowest. Taking the last id either way hands a
+        # backward caller the page it just read, forever.
+        next_cursor = items[0]["id"] if cursor_field == "max_id" else items[-1]["id"]
 
     if has_more:
         if remaining is not None:

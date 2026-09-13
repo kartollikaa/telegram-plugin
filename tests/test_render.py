@@ -377,3 +377,19 @@ def test_a_truncated_scan_that_returned_rows_can_be_continued():
     )
     assert env["next_cursor"] == 9, "the id to resume from is known whenever rows came back"
     assert "--min-id 9" in env["note"]
+
+
+def test_a_derived_cursor_respects_the_paging_direction():
+    """A forward page resumes after its highest id; a backward one before its
+    lowest. One rule for both hands a backward caller the page it just read."""
+    rows = [{"id": 10}, {"id": 11}, {"id": 12}]
+    forward = envelope(
+        rows, has_more=False, next_cursor=None, cursor_field="min_id",
+        scanned=9, scan_truncated=True,
+    )
+    backward = envelope(
+        rows, has_more=False, next_cursor=None, cursor_field="max_id",
+        scanned=9, scan_truncated=True,
+    )
+    assert forward["next_cursor"] == 12
+    assert backward["next_cursor"] == 10
