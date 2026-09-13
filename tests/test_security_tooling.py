@@ -164,14 +164,20 @@ def _hits(patterns, text: str) -> set[str]:
     return {pattern for pattern in patterns if re.search(pattern, text, re.IGNORECASE)}
 
 
+def _read_for_scan(path) -> str:
+    """latin-1 decodes any byte sequence, so nothing is skipped for being
+    undecodable. Swallowing UnicodeDecodeError here used to mean a latin-1 source
+    full of forbidden vocabulary passed every guard in this file."""
+    return path.read_bytes().decode("latin-1")
+
+
 def _scan(patterns, names=None) -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     for name in _tracked_files() if names is None else names:
-        try:
-            text = (REPO / name).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        path = REPO / name
+        if not path.is_file():
             continue
-        hit = _hits(patterns, text)
+        hit = _hits(patterns, _read_for_scan(path))
         if hit:
             found[name] = hit
     return found
@@ -320,11 +326,14 @@ def test_the_cli_exposes_exactly_the_expected_commands_and_flags():
 
 
 def _telethon_calls(*relative: str) -> tuple[set[str], set[str]]:
-    """Every method invoked on a Telethon client, and every raw request sent."""
+    """Every method invoked on a Telethon client, and every raw request sent.
+
+    `getattr(client, "delete_" + "dialog")` is deliberately reported as the
+    unresolvable call it is: a scan that silently ignored it would let any name
+    through while this file claims to be the backstop that needs no denylist."""
     methods, requests = set(), set()
     for name in relative:
-        path = REPO / name
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(_read_for_scan(REPO / name))):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
@@ -334,6 +343,18 @@ def _telethon_calls(*relative: str) -> tuple[set[str], set[str]]:
                 and func.value.id == "client"
             ):
                 methods.add(func.attr)
+            if isinstance(func, ast.Name) and func.id == "getattr" and node.args:
+                target = node.args[0]
+                if isinstance(target, ast.Name) and target.id == "client":
+                    methods.add(
+                        target.id
+                        + ".<dynamic>"
+                        + (
+                            f" ({ast.unparse(node.args[1])})"
+                            if len(node.args) > 1
+                            else ""
+                        )
+                    )
             if isinstance(func, ast.Name) and func.id == "client":
                 for argument in node.args:
                     if isinstance(argument, ast.Call):
@@ -344,10 +365,20 @@ def _telethon_calls(*relative: str) -> tuple[set[str], set[str]]:
     return methods, requests
 
 
+def _gateway_sources() -> list[str]:
+    """Every module under src/ except the out-of-process login program, so a new
+    file with direct Telethon calls cannot sidestep the scan."""
+    return [
+        str(path.relative_to(REPO))
+        for path in sorted((REPO / "src").rglob("*.py"))
+        if path.name != "login.py"
+    ]
+
+
 def test_the_gateway_telethon_surface_is_frozen():
     """The one guard that does not depend on knowing a forbidden name in advance:
     whatever the agent-reachable code calls on Telegram must be on this list."""
-    methods, requests = _telethon_calls("src/telegram_plugin/client.py")
+    methods, requests = _telethon_calls(*_gateway_sources())
     assert methods <= ALLOWED_GATEWAY_CALLS, (
         f"unapproved Telethon calls: {sorted(methods - ALLOWED_GATEWAY_CALLS)}"
     )
@@ -358,7 +389,7 @@ def test_the_gateway_telethon_surface_is_frozen():
 
 def test_the_gateway_cannot_authenticate():
     """"No agent-visible login" is a stated non-goal; this is what enforces it."""
-    methods, _ = _telethon_calls("src/telegram_plugin/client.py")
+    methods, _ = _telethon_calls(*_gateway_sources())
     assert methods & ALLOWED_LOGIN_ONLY_CALLS == set(), (
         f"the gateway reaches a login call: {sorted(methods & ALLOWED_LOGIN_ONLY_CALLS)}"
     )
@@ -372,7 +403,7 @@ def test_the_login_program_stays_within_its_own_surface():
 
 def test_the_telethon_surface_scan_actually_finds_calls():
     """Positive control: a scan that silently found nothing would pass forever."""
-    methods, requests = _telethon_calls("src/telegram_plugin/client.py")
+    methods, requests = _telethon_calls(*_gateway_sources())
     assert "iter_messages" in methods
     assert "send_message" in methods
     assert requests == {"CheckChatInviteRequest"}

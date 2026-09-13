@@ -416,7 +416,12 @@ Run: `./.venv/bin/python -m pytest tests/test_application.py tests/test_cli.py t
 
 Expected: all pass; no live Telegram send occurs.
 
-- [ ] **Step 7: Execute the task review gate**
+- [ ] **Step 7: Execute the task review gate** — AC-22 ждёт оператора
+
+Круги 1-2 закрыли AC-19, AC-20, AC-21. AC-22 переведён в ручные: его вторая половина
+(«активируется при явном запросе оператора») не наблюдаема внутри subagent-а, где
+authority оператора ненастоящая. Ограничительная половина доказана наблюдаемым
+поведением. Evidence: `acceptance/cli-first-agent-plugin-ac22-pressure-tests.md`.
 
 Apply the global gate with special attention to command injection, symlink/path escape, disabled-side-effect ordering, reply targeting, and absence of secrets/message text in logs.
 
@@ -460,7 +465,7 @@ git commit -m "Добавляем безопасные send и reply коман�
 - Produces: a portable root manifest, Claude Code compatibility manifest, Telethon-only runtime bootstrap, and no MCP runtime surface.
 - Preserves: `bin/telegram-login`, state paths, credentials, session format, output paths, and direct absolute-path CLI use.
 
-- [ ] **Step 1: Write failing packaging and MCP-removal guards**
+- [x] **Step 1: Write failing packaging and MCP-removal guards**
 
 Require a root manifest with the Agent Plugins schema, portable metadata, and automatic root `skills/` discovery. Require the Claude manifest to name the same plugin/version without `mcpServers`. Add a repository guard that rejects tracked `mcp`, `mcpServers`, `telegram-mcp`, and old MCP tool-call names outside archived design history.
 
@@ -473,13 +478,13 @@ def test_portable_manifest_is_canonical():
     assert "mcp" not in json.dumps(manifest).lower()
 ```
 
-- [ ] **Step 2: Prove the guards fail on current MCP files**
+- [x] **Step 2: Prove the guards fail on current MCP files**
 
 Run: `./.venv/bin/python -m pytest tests/test_manifests.py tests/test_security_tooling.py -q`
 
 Expected: failures enumerate the current MCP launcher, server, dependency, and manifest entries.
 
-- [ ] **Step 3: Add canonical portable and Claude manifests**
+- [x] **Step 3: Add canonical portable and Claude manifests**
 
 Create root `plugin.json` with `$schema`, `name`, version `0.6.0`, `description`, and
 `extensions.com.openai.interface` metadata. Set `pyproject.toml` and the Claude manifest to the same
@@ -487,37 +492,45 @@ version. Keep paths relative to the root. Update `.claude-plugin/plugin.json` to
 only. Remove unverified Codex/Cursor compatibility manifests rather than claim support through
 stale formats.
 
-- [ ] **Step 4: Remove MCP runtime code and dependency**
+- [x] **Step 4: Remove MCP runtime code and dependency**
 
 Delete the MCP server and launcher, remove `mcp>=2,<3`, remove MCP-only configuration/constants/tests, and change the shared dependency bootstrap to Telethon only. Update login's busy-session hint so it says another Telegram command or agent holds the session.
 
-- [ ] **Step 5: Rewrite user and architecture documentation**
+- [x] **Step 5: Rewrite user and architecture documentation**
 
 Document installation for Claude Code, Codex/OpenAI plugins, direct CLI use by generic local agents, setup, login, all commands, JSON/error contract, natural discovery, pagination/export, safe sending, concurrency, limitations, and the unsupported web-only case. Replace `docs/design.md` with the implemented CLI-first architecture and retain durable security/domain rationale without volatile measurements.
 
-- [ ] **Step 6: Update CI and security tooling**
+- [x] **Step 6: Update CI and security tooling**
 
 Make CI validate both manifests, executable launchers, tests, Ruff, Bandit, dependency audit, shellcheck, secret history, personal paths, and the no-MCP guard. Ensure `scripts/security-check.sh` checks `bin/telegram`, `bin/telegram-login`, and `scripts/setup.sh`.
 
-- [ ] **Step 7: Run focused packaging tests**
+- [x] **Step 7: Run focused packaging tests**
 
 Run: `./.venv/bin/python -m pytest tests/test_manifests.py tests/test_launcher.py tests/test_docs.py tests/test_skills.py tests/test_security_tooling.py -q`
 
 Expected: all pass and the no-MCP matcher reports zero real repository matches outside explicitly excluded historical spec text.
 
-- [ ] **Step 8: Run a clean bootstrap test**
+- [x] **Step 8: Run a clean bootstrap test**
 
 Use a newly created temporary state directory and execute `TELEGRAM_STATE_DIR=<temp> ./bin/telegram --help`. Verify exit `0`, usage on stdout, dependency installation only on stderr, a private state directory, and a dependency stamp that excludes MCP. Run the command a second time and verify it does not reinstall dependencies.
 
-- [ ] **Step 9: Run live read-only smoke verification**
+- [ ] **Step 9: Run live read-only smoke verification** — BLOCKED (AC-31 NO EVIDENCE)
+
+Attempted twice at `ca71bae` and `c03a427`, including with `TELEGRAM_LOCK_WAIT=300`; every step
+returned `session_busy`. Eight to ten live `python -m telegram_plugin.server` processes from the
+operator's other sessions hold the account, and they were not killed. Evidence and the re-run
+command: `acceptance/cli-first-agent-plugin-ac31-live-smoke.md`.
 
 With the operator's existing authorized session, run `whoami`, `find-chat` with a partial remembered name, `resolve`, `read --limit 3`, `search --limit 3`, `message`, `thread`, and one attachment download into `output_root`. Record redacted command status and output shapes, never message content or credentials. Skip only the attachment step if no candidate message with media exists and record that as manual NO EVIDENCE rather than PASS.
 
-- [ ] **Step 10: Execute the final task review gate**
+- [ ] **Step 10: Execute the final task review gate** — review closed, gate 8/9
+
+Two independent reviews and their repeat passes are closed with no actionable finding. The final
+acceptance gate returned 8 PASS and AC-31 NO EVIDENCE; it cannot go green until Step 9 runs.
 
 Give the complete `fa99595..HEAD` diff, all slice verdicts, clean-bootstrap evidence, no-MCP positive control, and live smoke evidence to a fresh reviewer. Fix and re-run until no actionable finding remains, then run the final acceptance gate.
 
-- [ ] **Step 11: Commit Task 5**
+- [x] **Step 11: Commit Task 5**
 
 ```bash
 git add -A
