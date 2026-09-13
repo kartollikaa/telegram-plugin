@@ -324,9 +324,9 @@ The constraints are part of the contract, not advice:
   goes forward, so `next_cursor` is the highest id returned and the caller
   continues with `--min-id`. `search` returns newest first, so its `next_cursor`
   is the *lowest* id returned and the caller continues with `--max-id`. Reading
-  one rule as the other silently re-reads the same page, which is why every
-  envelope carries `cursor_field` naming the one that applies. There is no
-  "ask again, but bigger".
+  one rule as the other silently re-reads the same page, which is why the `note`
+  spells out the flag to pass rather than leaving the caller to infer it. There
+  is no "ask again, but bigger".
 - **`--out` writes JSONL to disk** and returns only the path, the line count and
   the id range. This is the answer for "export a month of this chat": the data
   lands in a file the agent can then process, and the context window sees a

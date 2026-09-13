@@ -459,39 +459,53 @@ def test_send_text_source_validation(capsys, tmp_path):
     assert unsafe.sent == []
 
 
-def _parser_options() -> set[str]:
-    options: set[str] = set()
-    stack = [build_parser()]
-    while stack:
-        parser = stack.pop()
-        for action in parser._actions:
-            options.update(action.option_strings)
-            for choice in (getattr(action, "choices", None) or {}).values():
-                if hasattr(choice, "_actions"):
-                    stack.append(choice)
-    return options
+def _options_for(command: str) -> set[str]:
+    """Per command, not the union across all of them: a `search` note advertising
+    `--min-id` is valid for `read` and exit 2 for `search`."""
+    commands = next(
+        action.choices
+        for action in build_parser()._actions
+        if getattr(action, "choices", None)
+    )
+    return {
+        option
+        for action in commands[command]._actions
+        for option in action.option_strings
+    }
 
 
 @pytest.mark.parametrize(
-    "argv",
+    ("command", "argv", "expects_continuation"),
     [
-        ["read", "@alpha", "--limit", "2"],
-        ["search", "anything", "--chat", "@alpha", "--limit", "2"],
-        ["dialogs"],
+        ("read", ["read", "@alpha", "--limit", "2"], True),
+        ("search", ["search", "anything", "--chat", "@alpha", "--limit", "2"], True),
+        ("dialogs", ["dialogs"], False),
     ],
 )
-def test_notes_only_advertise_options_the_parser_accepts(capsys, tmp_path, argv):
-    """A note is an instruction the agent executes next. The old protocol surface
+def test_notes_only_advertise_options_the_parser_accepts(
+    capsys, tmp_path, command, argv, expects_continuation
+):
+    """A note is an instruction the agent executes next. The removed protocol surface
     named its arguments `min_id=` and `out_path=`; the CLI accepts neither, so a
     note carried over from that spelling sends the agent straight into exit 2."""
-    code, captured, _ = _invoke(capsys, tmp_path, argv)
+    code, captured, _ = _invoke(capsys, tmp_path, argv, FakeGateway())
 
     assert code == 0
-    note = json.loads(captured.out)["note"]
+    payload = json.loads(captured.out)
+    note = payload["note"]
+    accepted = _options_for(command)
+
     advertised = set(re.findall(r"--[a-z][a-z-]*", note))
-    assert advertised <= _parser_options(), (
-        f"note advertises options the parser rejects: {advertised - _parser_options()}"
+    assert advertised <= accepted, (
+        f"note advertises options {command} rejects: {sorted(advertised - accepted)}"
     )
-    assert not re.search(r"\b(min_id|max_id|out_path|query)=", note), (
+    # Bare old-style names, with or without the `=` the old surface used.
+    assert not re.search(r"(?<!-)\b(min_id|max_id|out_path)\b", note), (
         f"note uses the old argument spelling: {note}"
     )
+    if expects_continuation and payload.get("has_more"):
+        # A note that names nothing at all would satisfy the subset check vacuously.
+        assert advertised, f"a continuable page must say how to continue: {note}"
+        assert str(payload["next_cursor"]) in note, (
+            f"a continuable page must say where to continue from: {note}"
+        )

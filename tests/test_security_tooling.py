@@ -4,6 +4,7 @@ An absence claim is worth nothing without a known-true control, so every matcher
 here is first run against a fixture that deliberately contains each forbidden
 term. The scan is then run against the real tree."""
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -90,22 +91,60 @@ FORBIDDEN_SIDE_EFFECTS = (
     r"\bsend_file\b",
 )
 
-# The denylists above catch a forbidden call inside an existing command. This
-# catches the other move: a brand-new command, whatever it is called.
-EXPECTED_COMMANDS = frozenset(
+# A denylist only ever catches a spelling it already knows, and Telethon offers
+# hundreds it does not. These three allowlists are the actual backstop: the whole
+# agent-reachable surface has to match, so a new capability fails whether it
+# arrives as a new command, a new flag on an old command, or a new Telegram call
+# behind either.
+EXPECTED_COMMANDS: dict[str, tuple[list[str], list[str]]] = {
+    "whoami": ([], []),
+    "dialogs": (["--limit", "--query"], []),
+    "find-chat": (["--limit"], ["query"]),
+    "resolve": ([], ["chat"]),
+    "message": ([], ["chat", "message_id"]),
+    "thread": (["--limit"], ["chat", "root_message_id"]),
+    "read": (
+        [
+            "--from-user",
+            "--limit",
+            "--max-id",
+            "--media-only",
+            "--min-id",
+            "--out",
+            "--out-limit",
+            "--since",
+            "--until",
+        ],
+        ["chat"],
+    ),
+    "search": (["--chat", "--limit", "--max-id", "--out", "--out-limit"], ["query"]),
+    "download": (["--dest-dir"], ["chat", "message_id"]),
+    "send": (["--reply-to", "--text", "--text-file"], ["chat"]),
+}
+
+# Every Telethon method the agent-facing gateway may call, and every raw request
+# it may send. Read off the code and frozen: `log_out`, `delete_dialog`,
+# `SendMediaRequest` and the rest fail here no matter which command reaches them.
+ALLOWED_GATEWAY_CALLS = frozenset(
     {
-        "whoami",
-        "dialogs",
-        "find-chat",
-        "resolve",
-        "message",
-        "thread",
-        "read",
-        "search",
-        "download",
-        "send",
+        "connect",
+        "disconnect",
+        "download_media",
+        "get_entity",
+        "get_me",
+        "get_messages",
+        "is_user_authorized",
+        "iter_dialogs",
+        "iter_messages",
+        "send_message",
     }
 )
+ALLOWED_RAW_REQUESTS = frozenset({"CheckChatInviteRequest"})
+
+# The login program runs out of process, in front of a human, and is the only
+# place allowed to authenticate. Keeping its surface separate is the point: these
+# appearing in the gateway would mean an agent-reachable login.
+ALLOWED_LOGIN_ONLY_CALLS = frozenset({"start", "qr_login", "sign_in", "log_out"})
 
 
 def _tracked_files() -> list[str]:
@@ -251,10 +290,7 @@ def test_the_allowlist_explains_itself_and_stays_short():
     assert ".security-allowlist" in (REPO / "scripts/security-check.sh").read_text()
 
 
-def test_the_cli_exposes_exactly_the_expected_commands():
-    """An allowlist, not a denylist. A denylist only catches a forbidden call it
-    already knows how to spell; this catches any new command at all, whatever it
-    is named and however it is implemented."""
+def _command_surface() -> dict[str, tuple[list[str], list[str]]]:
     from telegram_plugin.cli import build_parser
 
     commands = next(
@@ -262,10 +298,86 @@ def test_the_cli_exposes_exactly_the_expected_commands():
         for action in build_parser()._actions
         if getattr(action, "choices", None)
     )
-    assert set(commands) == EXPECTED_COMMANDS, (
-        "the command surface changed; a new command needs a deliberate decision, "
-        "not a passing test"
+    surface = {}
+    for name, parser in commands.items():
+        options, positionals = set(), []
+        for action in parser._actions:
+            if action.option_strings:
+                options.update(o for o in action.option_strings if o not in ("-h", "--help"))
+            elif action.dest != "help":
+                positionals.append(action.dest)
+        surface[name] = (sorted(options), positionals)
+    return surface
+
+
+def test_the_cli_exposes_exactly_the_expected_commands_and_flags():
+    """Names alone are not enough: a destructive capability can arrive as a flag on
+    a command that is already allowed, leaving the command list untouched."""
+    assert _command_surface() == EXPECTED_COMMANDS, (
+        "the agent-reachable surface changed; a new command or flag needs a "
+        "deliberate decision, not a passing test"
     )
+
+
+def _telethon_calls(*relative: str) -> tuple[set[str], set[str]]:
+    """Every method invoked on a Telethon client, and every raw request sent."""
+    methods, requests = set(), set()
+    for name in relative:
+        path = REPO / name
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "client"
+            ):
+                methods.add(func.attr)
+            if isinstance(func, ast.Name) and func.id == "client":
+                for argument in node.args:
+                    if isinstance(argument, ast.Call):
+                        inner = argument.func
+                        requests.add(
+                            inner.id if isinstance(inner, ast.Name) else inner.attr
+                        )
+    return methods, requests
+
+
+def test_the_gateway_telethon_surface_is_frozen():
+    """The one guard that does not depend on knowing a forbidden name in advance:
+    whatever the agent-reachable code calls on Telegram must be on this list."""
+    methods, requests = _telethon_calls("src/telegram_plugin/client.py")
+    assert methods <= ALLOWED_GATEWAY_CALLS, (
+        f"unapproved Telethon calls: {sorted(methods - ALLOWED_GATEWAY_CALLS)}"
+    )
+    assert requests <= ALLOWED_RAW_REQUESTS, (
+        f"unapproved raw requests: {sorted(requests - ALLOWED_RAW_REQUESTS)}"
+    )
+
+
+def test_the_gateway_cannot_authenticate():
+    """"No agent-visible login" is a stated non-goal; this is what enforces it."""
+    methods, _ = _telethon_calls("src/telegram_plugin/client.py")
+    assert methods & ALLOWED_LOGIN_ONLY_CALLS == set(), (
+        f"the gateway reaches a login call: {sorted(methods & ALLOWED_LOGIN_ONLY_CALLS)}"
+    )
+
+
+def test_the_login_program_stays_within_its_own_surface():
+    methods, _ = _telethon_calls("src/telegram_plugin/login.py")
+    allowed = ALLOWED_GATEWAY_CALLS | ALLOWED_LOGIN_ONLY_CALLS
+    assert methods <= allowed, f"unapproved login calls: {sorted(methods - allowed)}"
+
+
+def test_the_telethon_surface_scan_actually_finds_calls():
+    """Positive control: a scan that silently found nothing would pass forever."""
+    methods, requests = _telethon_calls("src/telegram_plugin/client.py")
+    assert "iter_messages" in methods
+    assert "send_message" in methods
+    assert requests == {"CheckChatInviteRequest"}
+    login_methods, _ = _telethon_calls("src/telegram_plugin/login.py")
+    assert "qr_login" in login_methods
 
 
 def test_every_excluded_file_still_guards_the_vocabulary_it_is_exempt_from():

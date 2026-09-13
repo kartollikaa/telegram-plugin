@@ -262,7 +262,7 @@ window is useless, and a plugin holding a personal session should not be able to
 do damage on a misread instruction.
 
 - **`--limit` is capped**, so an over-large request is refused rather than quietly
-  trimmed: 200 for `read`, `search` and `dialogs`, and 50 for `find-chat`, whose
+  trimmed: 200 for `read`, `search`, `thread` and `dialogs`, and 50 for `find-chat`, whose
   job is to hand you a shortlist. Message text is truncated at 500 characters and
   flagged.
 - **Wide ranges go to disk.** Pass `--out` and the rows are written as JSONL; the
@@ -273,7 +273,8 @@ do damage on a misread instruction.
 - **Paging is by cursor.** `read` moves forward: `next_cursor` is the last (highest)
   id returned, and you continue with `--min-id`. `search` moves backward, newest
   first: its `next_cursor` is the first (lowest) id returned, and you continue with
-  `--max-id`. `cursor_field` in every envelope names which one applies.
+  `--max-id`. You do not have to remember which: the `note` on every continuable
+  page names the exact flag to pass next.
 - **Writes are confined.** `--out` and `--dest-dir` must stay inside
   `TELEGRAM_OUTPUT_ROOT` (by default the state directory's `downloads/`), and an
   existing file is never overwritten silently.
