@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 # The real headers, not a stand-in: the field names are the whole contract here.
 from telethon.tl.types import (
     MessageReplyHeader,
@@ -156,9 +158,12 @@ def test_an_empty_result_distinguishes_a_filter_from_an_empty_range():
 
 
 def test_a_truncated_scan_says_so():
+    """With nothing to resume from, the note reports the cut-short scan and names
+    only filters that take a value the caller already has."""
     env = envelope([], has_more=False, next_cursor=None, scanned=20000, scan_truncated=True)
     assert "20000" in env["note"]
-    assert "narrow the range" in env["note"].lower()
+    assert "stopped" in env["note"]
+    assert "--since" in env["note"] and "--until" in env["note"]
 
 
 def test_a_truncated_scan_never_claims_the_range_is_exhausted():
@@ -323,3 +328,52 @@ def test_a_zero_byte_attachment_reports_zero_not_unknown():
 
     described = _describe_media(_real_document("empty.txt", mime="text/plain", size=0))
     assert described["size"] == 0, "`or` chains read a real zero as 'unknown'"
+
+
+def _flags_without_values(note: str) -> list[str]:
+    """A flag in a note is an instruction. `--min-id` with nothing after it is a
+    command that exits 2, so the agent that follows the note loses the page."""
+    import re
+
+    offenders = []
+    for match in re.finditer(r"(--[a-z][a-z-]*)(\s+(\S+))?", note):
+        flag, value = match.group(1), (match.group(3) or "").strip(".,;")
+        if flag in ("--since", "--until", "--out"):
+            continue  # named as things to pass, not as a value to resume from
+        if not (value.isdigit() or (value.isupper() and value.isalpha())):
+            offenders.append(flag)
+    return offenders
+
+
+@pytest.mark.parametrize("has_more", [False, True])
+@pytest.mark.parametrize("scan_truncated", [False, True])
+@pytest.mark.parametrize("items", [[], [{"id": 7}]])
+def test_no_note_ever_names_a_flag_without_the_value_to_pass(has_more, scan_truncated, items):
+    env = envelope(
+        items,
+        has_more=has_more,
+        next_cursor=7 if has_more and items else None,
+        scanned=1000,
+        scan_truncated=scan_truncated,
+    )
+    assert _flags_without_values(env["note"]) == [], env["note"]
+    assert "None" not in env["note"], env["note"]
+
+
+def test_the_flag_value_guard_catches_a_bare_flag():
+    """Positive control — this is the exact shape that shipped and exited 2."""
+    assert _flags_without_values("narrow the range with --min-id and ask again.") == ["--min-id"]
+    assert _flags_without_values("continue with --min-id 15.") == []
+    assert _flags_without_values("pass --out PATH to write it.") == []
+
+
+def test_a_truncated_scan_that_returned_rows_can_be_continued():
+    env = envelope(
+        [{"id": 3}, {"id": 9}],
+        has_more=False,
+        next_cursor=None,
+        scanned=1000,
+        scan_truncated=True,
+    )
+    assert env["next_cursor"] == 9, "the id to resume from is known whenever rows came back"
+    assert "--min-id 9" in env["note"]

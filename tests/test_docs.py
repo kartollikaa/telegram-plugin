@@ -163,9 +163,9 @@ def test_the_readme_explains_the_one_account_several_sessions_reality():
 
 
 def test_every_cli_flag_is_documented_in_the_readme():
-    """The README is the operator's reference, so a flag has to be there — not only
-    in a skill, which is the agent's. Checking "documented somewhere" would have
-    passed on `send --reply-to`, which lived only in the send skill."""
+    """Per command, not as one pooled set. `thread --min-id` shipped undocumented
+    because `read` documents a flag of the same name, and a pooled check cannot
+    tell "documented for this command" from "documented anywhere"."""
     from telegram_plugin.cli import build_parser
 
     commands = next(
@@ -175,14 +175,19 @@ def test_every_cli_flag_is_documented_in_the_readme():
     )
     # Substring matching would pass `--text` on the strength of `--text-file`.
     documented = set(re.findall(r"--[a-z][a-z-]*", README))
-    undocumented = {
-        option
-        for parser in commands.values()
+    missing = {
+        f"{name} {option}"
+        for name, parser in commands.items()
         for action in parser._actions
         for option in action.option_strings
         if option not in ("-h", "--help") and option not in documented
     }
-    assert undocumented == set(), undocumented
+    assert missing == set(), missing
+
+    # …and the command has to be named near its own flags, so a reader can tell
+    # which command accepts what.
+    for name in ("read", "search", "thread", "send", "download", "dialogs", "find-chat"):
+        assert f"`{name}" in README, name
 
 
 def test_every_error_code_the_code_can_raise_is_documented():

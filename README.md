@@ -150,7 +150,7 @@ operation and prints one JSON object.
 | `find-chat QUERY --limit N` | rank chats by a remembered name, with `score` and `matched_by` |
 | `resolve CHAT` | identify a chat from a `t.me` link, `@name` or numeric id — never joins it |
 | `message CHAT ID` | one exact message |
-| `thread CHAT ROOT_ID` | replies in one forum topic or comment thread |
+| `thread CHAT ROOT_ID` | replies in one forum topic or comment thread, paged on `--min-id` |
 | `read CHAT …` | history in ascending id order, with a cursor |
 | `search QUERY --chat CHAT …` | full-text search, in one chat or all of them |
 | `download CHAT ID --dest-dir D` | one attachment to disk, returns the path |
@@ -161,8 +161,12 @@ operation and prints one JSON object.
 Add `--reply-to MESSAGE_ID` to answer a specific message rather than posting a new one.
 
 `read` accepts `--min-id`, `--max-id`, `--since`, `--until`, `--from-user` and
-`--media-only`; `search` pages backwards on `--max-id`, because search results
+`--media-only`; `thread` accepts `--min-id` to continue past its first page; `search` pages backwards on `--max-id`, because search results
 arrive newest first. Both accept `--out` to write JSONL instead of returning rows.
+`--since` and `--until` are inclusive at the instant they name, and a bare date
+means midnight — so `--until 2026-01-03` stops before that day rather than
+including it. Pass a time when you mean a whole day.
+
 An empty result says whether the range was empty or the filters excluded
 everything in it — the two are not the same answer.
 

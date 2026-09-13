@@ -35,7 +35,7 @@ Follow these steps in order, stopping as soon as the chat is unambiguous:
 
 `find-chat` is deterministic fuzzy metadata matching, not semantic search. For a message
 link, use its chat part with `resolve`, then pass the extracted message id to `message`.
-For replies or a forum topic, use `thread CHAT ROOT_MESSAGE_ID --limit N`.
+For replies or a forum topic, use `thread CHAT ROOT_MESSAGE_ID --limit N` — continue past a page with `--min-id ID`.
 
 ## Reading, paging, and files
 

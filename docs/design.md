@@ -241,7 +241,7 @@ thing so that a result can be read without knowing which flags produced it.
 | `find-chat` | rank chats against a remembered name, returning `score` and `matched_by` |
 | `resolve` | accepts `https://t.me/name`, `https://t.me/c/<id>/<msg>`, `https://t.me/+invite`, `@name`, a numeric id; returns id, type, title |
 | `message` | one exact message by id, or `message_not_found` |
-| `thread` | the replies under one forum topic or comment root, ascending |
+| `thread` | the replies under one forum topic or comment root, ascending, paged on `--min-id` |
 | `read` | messages in ascending id order, with filters and a forward cursor |
 | `search` | text search, globally or in one chat, with a backward cursor |
 | `download` | one document to disk, returns the path |

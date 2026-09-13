@@ -173,7 +173,18 @@ def envelope(
     remaining: int | None = None,
     total: int | None = None,
 ) -> dict:
-    """`note` states the remaining count when it is known, and says so when it is not."""
+    """`note` states the remaining count when it is known, and says so when it is not.
+
+    Every flag the note names carries the value to pass with it. A note that says
+    "continue with --min-id" and stops is an instruction that exits 2, which is
+    worse than saying nothing: the agent follows it and loses the page.
+    """
+    # A truncated scan means more may exist even when this page filled short of
+    # its limit, and the id to resume from is known whenever anything came back.
+    continuable = has_more or (scan_truncated and bool(items))
+    if continuable and next_cursor is None and items:
+        next_cursor = items[-1]["id"]
+
     if has_more:
         if remaining is not None:
             left = f"{remaining} more available"
@@ -181,16 +192,31 @@ def envelope(
             left = f"more available (this chat holds {total} messages in total)"
         else:
             left = "more available (the count in this range is not known without scanning it)"
+        resume = (
+            f"continue with {_flag(cursor_field)} {next_cursor}"
+            if next_cursor is not None
+            else "ask again with a narrower range"
+        )
         note = (
-            f"{len(items)} returned, {left} — continue with {_flag(cursor_field)} {next_cursor}, "
-            "or pass --out PATH to write the whole range to a JSONL file instead of into this "
-            "conversation."
+            f"{len(items)} returned, {left} — {resume}, or pass --out PATH to write the "
+            "whole range to a JSONL file instead of into this conversation."
+        )
+        if scan_truncated:
+            note += (
+                f" The scan also stopped at {scanned} messages, so anything counted "
+                "above is a floor rather than a total."
+            )
+    elif scan_truncated and items:
+        note = (
+            f"{len(items)} returned, and the scan stopped at {scanned} messages before "
+            f"reaching the end of the range — more may exist. Continue with "
+            f"{_flag(cursor_field)} {next_cursor}."
         )
     elif scan_truncated:
         note = (
-            f"{len(items)} returned, and the scan stopped at {scanned} messages before "
-            f"reaching the end — more may exist. Narrow the range with {_flag(cursor_field)} "
-            "and ask again."
+            f"nothing matched in the first {scanned} messages, and the scan stopped "
+            "there rather than reaching the end of the range — narrow it with --since "
+            "or --until and ask again."
         )
     elif items:
         note = f"{len(items)} returned; nothing left in this range."
@@ -201,11 +227,6 @@ def envelope(
         )
     else:
         note = "nothing in this range."
-    if scan_truncated and has_more:
-        note += (
-            f" Scanning also stopped at {scanned} messages to stay cheap, so the "
-            "remaining count is a floor, not a total."
-        )
     result = {
         "items": items,
         "returned": len(items),
