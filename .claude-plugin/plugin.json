@@ -1,6 +1,6 @@
 {
   "name": "telegram",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "description": "Read your own Telegram account from a local agent: find a chat, read history, search and download attachments. Sending is off unless TELEGRAM_PLUGIN_ALLOW_SEND=1.",
   "author": {
     "name": "Dmitrii Maksimov",
