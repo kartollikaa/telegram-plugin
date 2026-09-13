@@ -130,3 +130,46 @@ def test_confined_text_reader_resists_a_path_swap(monkeypatch, tmp_path):
         read_confined_text(candidate.name, root=root)
 
     assert outside.read_text() == "OUTSIDE-CONTENT"
+
+
+def test_confined_text_reader_refuses_an_absolute_path_outside_the_root(tmp_path):
+    root = tmp_path / "output"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE-CONTENT")
+
+    with pytest.raises(UnsafeInputPath):
+        read_confined_text(str(outside), root=root)
+
+
+def test_confined_text_reader_refuses_a_relative_escape_from_the_root(tmp_path):
+    root = tmp_path / "output"
+    root.mkdir()
+    (tmp_path / "outside.txt").write_text("OUTSIDE-CONTENT")
+
+    with pytest.raises(UnsafeInputPath):
+        read_confined_text("../outside.txt", root=root)
+
+
+def test_confined_text_reader_refuses_a_symlink_pointing_out_of_the_root(tmp_path):
+    root = tmp_path / "output"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE-CONTENT")
+    (root / "message.txt").symlink_to(outside)
+
+    with pytest.raises(UnsafeInputPath):
+        read_confined_text("message.txt", root=root)
+
+
+def test_confined_text_reader_refuses_a_symlinked_parent_directory(tmp_path):
+    """The leaf is an honest file; the directory above it is the escape."""
+    root = tmp_path / "output"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "message.txt").write_text("OUTSIDE-CONTENT")
+    (root / "nested").symlink_to(elsewhere)
+
+    with pytest.raises(UnsafeInputPath):
+        read_confined_text("nested/message.txt", root=root)

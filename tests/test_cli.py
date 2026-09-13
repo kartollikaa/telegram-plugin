@@ -406,3 +406,53 @@ def test_send_text_file_validation_precedes_gateway_access(capsys, tmp_path, kin
     expected = "empty_text" if kind == "empty" else "unsafe_path"
     assert json.loads(captured.out)["error"]["code"] == expected
     assert gateway.sent == []
+
+
+def test_send_text_source_validation(capsys, tmp_path):
+    """AC-21 in one place: every way of getting the text wrong is refused, and
+    none of them reaches the gateway."""
+    root = tmp_path / "output"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE-CONTENT")
+    allow_send = {"TELEGRAM_PLUGIN_ALLOW_SEND": "1"}
+
+    both = FakeGateway()
+    code, captured, _ = _invoke(
+        capsys,
+        tmp_path,
+        ["send", "@alpha", "--text", "hi", "--text-file", "message.txt"],
+        both,
+        allow_send,
+    )
+    assert code == 2
+    assert captured.out == ""
+    assert "not allowed with argument" in captured.err
+    assert both.sent == []
+
+    neither = FakeGateway()
+    code, captured, _ = _invoke(capsys, tmp_path, ["send", "@alpha"], neither, allow_send)
+    assert code == 2
+    assert captured.out == ""
+    assert "one of the arguments --text --text-file is required" in captured.err
+    assert neither.sent == []
+
+    empty = FakeGateway()
+    code, captured, _ = _invoke(
+        capsys, tmp_path, ["send", "@alpha", "--text", "   "], empty, allow_send
+    )
+    assert code == 1
+    assert json.loads(captured.out)["error"]["code"] == "empty_text"
+    assert empty.sent == []
+
+    unsafe = FakeGateway()
+    code, captured, _ = _invoke(
+        capsys,
+        tmp_path,
+        ["send", "@alpha", "--text-file", str(outside)],
+        unsafe,
+        allow_send,
+    )
+    assert code == 1
+    assert json.loads(captured.out)["error"]["code"] == "unsafe_path"
+    assert unsafe.sent == []
