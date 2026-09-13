@@ -41,6 +41,7 @@ limit_value = _bounded_integer(MAX_ITEMS)
 export_limit_value = _bounded_integer(EXPORT_LIMIT)
 positive_integer = _bounded_integer(2**63 - 1)
 discovery_limit = _bounded_integer(50)
+cursor_integer = _bounded_integer(2**63 - 1)
 
 
 def _discovery_query(raw: str) -> str:
@@ -57,56 +58,82 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("whoami", help="show the authorized Telegram account")
 
     dialogs = commands.add_parser("dialogs", help="list chats, optionally filtered by title")
-    dialogs.add_argument("--query")
-    dialogs.add_argument("--limit", type=limit_value, default=DEFAULT_ITEMS)
+    dialogs.add_argument("--query", help="substring of the chat title")
+    dialogs.add_argument(
+        "--limit", type=limit_value, default=DEFAULT_ITEMS, help=f"1..{MAX_ITEMS}"
+    )
 
     find_chat = commands.add_parser("find-chat", help="find chats by remembered metadata")
-    find_chat.add_argument("query", type=_discovery_query)
-    find_chat.add_argument("--limit", type=discovery_limit, default=10)
+    find_chat.add_argument("query", help="a remembered name, partial and case-insensitive", type=_discovery_query)
+    find_chat.add_argument("--limit", type=discovery_limit, default=10, help="1..50")
 
     resolve = commands.add_parser("resolve", help="resolve an exact chat reference")
-    resolve.add_argument("chat")
+    resolve.add_argument("chat", help="t.me link, @username or numeric id")
 
     message = commands.add_parser("message", help="read one exact message")
-    message.add_argument("chat")
+    message.add_argument("chat", help="t.me link, @username or numeric id")
     message.add_argument("message_id", type=positive_integer)
 
     thread = commands.add_parser("thread", help="read replies in one topic or comment thread")
-    thread.add_argument("chat")
-    thread.add_argument("root_message_id", type=positive_integer)
-    thread.add_argument("--limit", type=limit_value, default=DEFAULT_ITEMS)
+    thread.add_argument("chat", help="t.me link, @username or numeric id")
+    thread.add_argument(
+        "root_message_id", type=positive_integer, help="the topic or comment root"
+    )
+    thread.add_argument(
+        "--limit", type=limit_value, default=DEFAULT_ITEMS, help=f"1..{MAX_ITEMS}"
+    )
 
     read = commands.add_parser("read", help="read chat history in ascending order")
-    read.add_argument("chat")
-    read.add_argument("--limit", type=limit_value, default=DEFAULT_ITEMS)
-    read.add_argument("--min-id", type=int)
-    read.add_argument("--max-id", type=int)
-    read.add_argument("--since")
-    read.add_argument("--until")
-    read.add_argument("--from-user")
-    read.add_argument("--media-only", action="store_true")
-    read.add_argument("--out", dest="out_path")
-    read.add_argument("--out-limit", type=export_limit_value, default=1000)
+    read.add_argument("chat", help="t.me link, @username or numeric id")
+    read.add_argument(
+        "--limit", type=limit_value, default=DEFAULT_ITEMS, help=f"1..{MAX_ITEMS}"
+    )
+    read.add_argument("--min-id", type=cursor_integer, help="exclusive lower bound; continue here")
+    read.add_argument("--max-id", type=cursor_integer, help="exclusive upper bound")
+    read.add_argument("--since", help="ISO 8601 date or datetime, inclusive")
+    read.add_argument("--until", help="ISO 8601 date or datetime, exclusive")
+    read.add_argument("--from-user", help="@username or numeric id of the sender")
+    read.add_argument("--media-only", action="store_true", help="only messages with an attachment")
+    read.add_argument(
+        "--out", dest="out_path", help="write JSONL here, relative to the output root"
+    )
+    read.add_argument(
+        "--out-limit", type=export_limit_value, default=1000, help=f"1..{EXPORT_LIMIT}"
+    )
 
     search = commands.add_parser("search", help="search messages in one chat or globally")
-    search.add_argument("query")
-    search.add_argument("--chat")
-    search.add_argument("--limit", type=limit_value, default=DEFAULT_ITEMS)
-    search.add_argument("--max-id", type=int)
-    search.add_argument("--out", dest="out_path")
-    search.add_argument("--out-limit", type=export_limit_value, default=1000)
+    search.add_argument("query", help="text to look for")
+    search.add_argument("--chat", help="restrict to one chat; omit to search every chat")
+    search.add_argument(
+        "--limit", type=limit_value, default=DEFAULT_ITEMS, help=f"1..{MAX_ITEMS}"
+    )
+    search.add_argument(
+        "--max-id", type=cursor_integer, help="results page backwards; continue here"
+    )
+    search.add_argument(
+        "--out", dest="out_path", help="write JSONL here, relative to the output root"
+    )
+    search.add_argument(
+        "--out-limit", type=export_limit_value, default=1000, help=f"1..{EXPORT_LIMIT}"
+    )
 
     download = commands.add_parser("download", help="download one message attachment")
-    download.add_argument("chat")
+    download.add_argument("chat", help="t.me link, @username or numeric id")
     download.add_argument("message_id", type=positive_integer)
-    download.add_argument("--dest-dir", dest="dest_dir")
+    download.add_argument(
+        "--dest-dir", dest="dest_dir", help="directory under the output root"
+    )
 
     send = commands.add_parser("send", help="send one explicit text message or reply")
-    send.add_argument("chat")
+    send.add_argument("chat", help="t.me link, @username or numeric id")
     text_source = send.add_mutually_exclusive_group(required=True)
-    text_source.add_argument("--text")
-    text_source.add_argument("--text-file")
-    send.add_argument("--reply-to", type=positive_integer)
+    text_source.add_argument("--text", help="the message body, as one argument")
+    text_source.add_argument(
+        "--text-file", help="read the body from this file under the output root"
+    )
+    send.add_argument(
+        "--reply-to", type=positive_integer, help="id of the message being replied to"
+    )
 
     return parser
 

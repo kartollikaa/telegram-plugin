@@ -191,8 +191,10 @@ def _backward_envelope(batch: Batch, limit: int) -> dict:
 def _thread_envelope(batch: Batch, limit: int) -> dict:
     has_more = len(batch.rows) > limit
     items = batch.rows[:limit]
+    next_cursor = items[-1]["id"] if items and has_more else None
     note = (
-        f"{len(items)} replies returned; more exist beyond this bounded result."
+        f"{len(items)} replies returned, more exist — continue with --min-id "
+        f"{next_cursor}."
         if has_more
         else f"{len(items)} replies returned; nothing left in this thread."
     )
@@ -200,7 +202,7 @@ def _thread_envelope(batch: Batch, limit: int) -> dict:
         "items": items,
         "returned": len(items),
         "has_more": has_more,
-        "next_cursor": None,
+        "next_cursor": next_cursor,
         "note": note,
     }
 

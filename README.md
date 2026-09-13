@@ -133,9 +133,10 @@ command-line argument, so no secret lands in shell history or the process table.
 Until a login succeeds, every command answers with the command to run rather than
 a traceback.
 
-Each command takes an exclusive lock on the session file. If two agents try to
-use one session at the same time, the second is told so instead of racing for the
-auth key.
+Each command takes an exclusive lock on the session file, so two agents never race
+for the auth key. The second waits rather than failing — see
+[One account, several sessions](#one-account-several-sessions) for how long and what
+happens when the wait runs out.
 
 ## Commands
 
@@ -154,6 +155,10 @@ operation and prints one JSON object.
 | `search QUERY --chat CHAT …` | full-text search, in one chat or all of them |
 | `download CHAT ID --dest-dir D` | one attachment to disk, returns the path |
 | `send CHAT --text T` | **refused unless `TELEGRAM_PLUGIN_ALLOW_SEND=1`** |
+
+`send` takes the body either inline with `--text` or from a file with `--text-file`
+(a regular, non-symlink file under the output root) — the two are mutually exclusive.
+Add `--reply-to MESSAGE_ID` to answer a specific message rather than posting a new one.
 
 `read` accepts `--min-id`, `--max-id`, `--since`, `--until`, `--from-user` and
 `--media-only`; `search` pages backwards on `--max-id`, because search results
@@ -188,9 +193,25 @@ human text and exit `0`. Everything that touches Telegram answers in JSON.
 | `1` | the operation failed | `{"error": {"code": …, "message": …}}` on stdout |
 | `2` | the command line was wrong | argparse usage on stderr; stdout is empty |
 
-Error codes are stable strings — `not_authorized`, `session_busy`,
-`message_not_found`, `unsafe_path`, `send_disabled`, `empty_text` and the rest —
-so an agent can branch on the code rather than on prose.
+Error codes are stable strings, so an agent can branch on the code rather than on
+prose. The complete set:
+
+| Code | Means |
+|---|---|
+| `not_authorized` | no usable session; the message names the command to run |
+| `missing_credentials` | no API id or hash in the environment or `.env` |
+| `session_busy` | another process holds the session lock and the wait ran out |
+| `unknown_chat_ref` | the chat reference is not one of the accepted forms |
+| `not_a_member` | an invite link resolved, but the account has not joined |
+| `message_not_found` | no message with that id in that chat |
+| `no_such_media` | that message carries no attachment |
+| `media_too_large` | the attachment exceeds `TELEGRAM_MAX_DOWNLOAD_BYTES` |
+| `unsafe_path` | a read or write path escaped the output root |
+| `send_disabled` | sending is off; nothing was sent |
+| `empty_text` | the message body was empty or whitespace |
+| `flood_wait` | Telegram asked for a wait; the message carries the seconds |
+| `telegram_error` | a plugin error with no more specific code |
+| `unexpected_error` | anything unclassified — treat as a bug |
 
 ## Skills
 

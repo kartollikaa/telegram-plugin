@@ -41,8 +41,7 @@ def test_long_text_is_truncated_and_flagged():
 
 
 def test_media_is_described_but_never_carried():
-    media = SimpleNamespace(mime_type="application/pdf", file_name="doc.pdf", size=1234)
-    rendered = render_message(_msg(media=media))
+    rendered = render_message(_msg(media=_real_document("doc.pdf")))
     assert rendered["media"] == {"type": "application/pdf", "file_name": "doc.pdf", "size": 1234}
     assert "bytes" not in rendered
     assert "content" not in rendered
@@ -176,7 +175,7 @@ def test_a_sender_chosen_name_reaches_the_model_already_truncated():
 
 
 def test_attachment_names_are_sanitised_in_metadata_too():
-    media = SimpleNamespace(mime_type="application/pdf", file_name="; rm -rf ~ ;.pdf", size=1)
+    media = _real_document("; rm -rf ~ ;.pdf")
     assert render_message(_msg(media=media))["media"]["file_name"] == "_rm_-rf_.pdf"
 
 
@@ -214,3 +213,65 @@ def test_the_documented_thresholds_are_the_ones_in_the_code():
         assert str(TEXT_LIMIT) in text, f"{document} must state the truncation threshold"
     for document in ("README.md", "docs/design.md"):
         assert str(MAX_ITEMS) in (repo / document).read_text()
+
+
+def _real_document(name: str, *, mime: str = "application/pdf", size: int = 1234):
+    """Built from Telethon's own types, not a stand-in. A double shaped like the
+    code's assumption is exactly what hid this: `_describe_media` read
+    `mime_type`/`file_name`/`size` off the media wrapper, where real Telethon
+    keeps none of them, so every attachment reported nulls."""
+    import datetime
+
+    from telethon.tl.types import Document, DocumentAttributeFilename, MessageMediaDocument
+
+    document = Document(
+        id=1,
+        access_hash=1,
+        file_reference=b"",
+        date=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+        mime_type=mime,
+        size=size,
+        dc_id=1,
+        attributes=[DocumentAttributeFilename(name)],
+    )
+    return MessageMediaDocument(document=document)
+
+
+def test_a_real_document_reports_its_type_name_and_size():
+    from telegram_plugin.render import _describe_media
+
+    assert _describe_media(_real_document("report.pdf")) == {
+        "type": "application/pdf",
+        "file_name": "report.pdf",
+        "size": 1234,
+    }
+
+
+def test_a_sender_chosen_name_is_sanitised_on_a_real_document():
+    """The README calls this a boundary control. It only counts if it runs on the
+    shape Telegram actually delivers."""
+    from telegram_plugin.render import _describe_media
+
+    described = _describe_media(_real_document("../../etc/passwd; rm -rf ~.txt"))
+    for forbidden in ("/", "\\", ";", "~", "$", "`", "|", "&"):
+        assert forbidden not in described["file_name"], described["file_name"]
+    # a name that is nothing but traversal cannot survive as a path component
+    assert _describe_media(_real_document(".."))["file_name"] == "attachment"
+
+
+def test_a_real_photo_reports_its_largest_rendition():
+    import datetime
+
+    from telethon.tl.types import MessageMediaPhoto, Photo, PhotoSize
+
+    from telegram_plugin.render import _describe_media
+
+    photo = Photo(
+        id=2,
+        access_hash=1,
+        file_reference=b"",
+        date=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+        sizes=[PhotoSize(type="s", w=10, h=10, size=100), PhotoSize(type="x", w=99, h=99, size=5678)],
+        dc_id=1,
+    )
+    assert _describe_media(MessageMediaPhoto(photo=photo))["size"] == 5678

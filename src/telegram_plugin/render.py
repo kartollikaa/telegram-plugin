@@ -106,14 +106,40 @@ def _reply_link(
 
 
 def _describe_media(media: Any) -> dict | None:
+    """Telethon keeps a document's metadata on `media.document` and its name in
+    `document.attributes`, never on the media wrapper. Reading the wrapper — as
+    this did — returns a null name and a null size for every real attachment,
+    which also means `safe_name` never runs on the one string the sender picked."""
     if media is None:
         return None
-    file_name = getattr(media, "file_name", None)
+    document = getattr(media, "document", None)
+    file_name = _document_file_name(document)
+    size = (
+        getattr(media, "size", None)
+        or getattr(document, "size", None)
+        or _largest_photo_size(media)
+    )
+    mime = getattr(media, "mime_type", None) or getattr(document, "mime_type", None)
     return {
-        "type": getattr(media, "mime_type", None) or type(media).__name__,
+        "type": mime or type(media).__name__,
         "file_name": safe_name(file_name) if file_name else None,
-        "size": getattr(media, "size", None),
+        "size": size,
     }
+
+
+def _document_file_name(document: Any) -> str | None:
+    for attribute in getattr(document, "attributes", None) or ():
+        name = getattr(attribute, "file_name", None)
+        if name:
+            return name
+    return None
+
+
+def _largest_photo_size(media: Any) -> int | None:
+    """A photo has no single size; the largest rendition is the honest answer."""
+    sizes = getattr(getattr(media, "photo", None), "sizes", None) or ()
+    known = [value for value in (getattr(s, "size", None) for s in sizes) if isinstance(value, int)]
+    return max(known) if known else None
 
 
 def _flag(cursor_field: str) -> str:
@@ -156,8 +182,8 @@ def envelope(
         note = "nothing in this range."
     if scan_truncated:
         note += (
-            f" Scanning stopped at {scanned} messages to stay cheap; narrow the range with "
-            "--min-id or --max-id and ask again."
+            f" Scanning stopped at {scanned} messages to stay cheap; narrow the range "
+            f"with {_flag(cursor_field)} and ask again."
         )
     result = {
         "items": items,

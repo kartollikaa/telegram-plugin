@@ -145,8 +145,10 @@ def test_all_read_commands_dispatch(capsys, tmp_path):
         ].out
     )
     assert thread_payload["has_more"] is True
-    assert thread_payload["next_cursor"] is None
-    assert "bounded result" in thread_payload["note"]
+    # A page that says more exist has to say where to continue from, like read does.
+    assert thread_payload["next_cursor"] == thread_payload["items"][-1]["id"]
+    assert "--min-id" in thread_payload["note"]
+    assert "more exist" in thread_payload["note"]
 
 
 @pytest.mark.parametrize(

@@ -25,6 +25,8 @@ _BARE = re.compile(r"^([A-Za-z][A-Za-z0-9_]{3,31})$")
 
 
 class UnknownChatRef(TelegramPluginError, ValueError):
+    code = "unknown_chat_ref"
+
     def __init__(self, ref: str) -> None:
         super().__init__(f"Cannot read {ref!r} as a chat. Accepted forms: {ACCEPTED}.")
 

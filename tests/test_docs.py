@@ -160,3 +160,39 @@ def test_the_readme_explains_the_one_account_several_sessions_reality():
     assert "reconnecting is not a fresh handshake" in README_FLAT
     for variable in ("TELEGRAM_IDLE_TIMEOUT", "TELEGRAM_LOCK_WAIT"):
         assert variable in README, variable
+
+
+def test_every_cli_flag_is_documented_in_the_readme():
+    """The README is the operator's reference, so a flag has to be there — not only
+    in a skill, which is the agent's. Checking "documented somewhere" would have
+    passed on `send --reply-to`, which lived only in the send skill."""
+    from telegram_plugin.cli import build_parser
+
+    commands = next(
+        action.choices
+        for action in build_parser()._actions
+        if getattr(action, "choices", None)
+    )
+    undocumented = {
+        option
+        for parser in commands.values()
+        for action in parser._actions
+        for option in action.option_strings
+        if option not in ("-h", "--help") and option not in README
+    }
+    assert undocumented == set(), undocumented
+
+
+def test_every_error_code_the_code_can_raise_is_documented():
+    import inspect
+
+    from telegram_plugin import errors, refs
+
+    codes = {
+        cls.code
+        for module in (errors, refs)
+        for _, cls in inspect.getmembers(module, inspect.isclass)
+        if issubclass(cls, errors.TelegramPluginError) and hasattr(cls, "code")
+    }
+    missing = {code for code in codes if f"`{code}`" not in README}
+    assert missing == set(), missing
