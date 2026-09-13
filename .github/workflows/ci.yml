@@ -24,6 +24,18 @@ jobs:
       - name: Tests
         run: python -m pytest -q
 
+      - name: Manifests parse and agree
+        run: |
+          python -c "import json; json.load(open('plugin.json'))"
+          python -c "import json; json.load(open('.claude-plugin/plugin.json'))"
+          python -m pytest -q tests/test_manifests.py
+
+      - name: Launchers are executable
+        run: test -x bin/telegram && test -x bin/telegram-login
+
+      - name: Absence guards (removed runtime, social side effects)
+        run: python -m pytest -q tests/test_security_tooling.py
+
   security:
     runs-on: ubuntu-latest
     steps:

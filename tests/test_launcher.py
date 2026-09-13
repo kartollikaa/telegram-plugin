@@ -1,6 +1,5 @@
 """The launcher is shell, so these tests actually run it."""
 
-import json
 import os
 import subprocess
 from pathlib import Path
@@ -8,38 +7,11 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-LAUNCHER = REPO / "bin" / "telegram-mcp"
 CLI_LAUNCHER = REPO / "bin" / "telegram"
-
-INITIALIZE = (
-    json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "0"},
-            },
-        }
-    )
-    + "\n"
-)
 
 
 def _run(state_dir: Path) -> subprocess.CompletedProcess:
-    environment = {**os.environ, "TELEGRAM_STATE_DIR": str(state_dir)}
-    environment.pop("TELEGRAM_PLUGIN_PYTHON", None)
-    return subprocess.run(
-        [str(LAUNCHER)],
-        input=INITIALIZE,
-        capture_output=True,
-        text=True,
-        env=environment,
-        timeout=600,
-        check=False,
-    )
+    return _run_cli(state_dir, "--help")
 
 
 def _run_cli(state_dir: Path, *arguments: str) -> subprocess.CompletedProcess:
@@ -117,11 +89,13 @@ def first_run(tmp_path_factory):
     return state, result, before
 
 
-def test_stdout_is_pure_jsonrpc_even_on_the_installing_run(first_run):
+def test_stdout_is_pure_program_output_even_on_the_installing_run(first_run):
+    """The install runs on the same invocation that must return parseable output;
+    a single pip line on stdout would be indistinguishable from a bad result."""
     _, result, _ = first_run
-    lines = [line for line in result.stdout.splitlines() if line.strip()]
-    assert lines, f"nothing on stdout; stderr was: {result.stderr[-2000:]}"
-    assert json.loads(lines[0])["jsonrpc"] == "2.0"
+    assert result.returncode == 0, f"stderr was: {result.stderr[-2000:]}"
+    assert result.stdout.startswith("usage: telegram")
+    assert "installing dependencies" not in result.stdout.lower()
 
 
 def test_the_installer_reported_itself_on_stderr(first_run):
@@ -165,8 +139,7 @@ def test_an_interpreter_without_the_dependencies_is_refused_not_worked_around(tm
         "TELEGRAM_PLUGIN_PYTHON": "/usr/bin/python3",
     }
     result = subprocess.run(
-        [str(LAUNCHER)],
-        input=INITIALIZE,
+        [str(CLI_LAUNCHER), "--help"],
         capture_output=True,
         text=True,
         env=environment,
@@ -174,7 +147,7 @@ def test_an_interpreter_without_the_dependencies_is_refused_not_worked_around(tm
         check=False,
     )
     assert result.returncode != 0
-    assert "cannot import telethon and mcp" in result.stderr
+    assert "cannot import telethon" in result.stderr
     assert "pip install" in result.stderr
     assert not (tmp_path / "venv").exists(), "it must not build a venv behind the override"
 
@@ -198,7 +171,7 @@ def own_state(tmp_path_factory):
 
 def test_a_wiped_site_packages_is_reinstalled_despite_a_matching_stamp(own_state):
     site = next((own_state / "venv" / "lib").glob("python*")) / "site-packages"
-    for package in ("telethon", "mcp"):
+    for package in ("telethon",):
         for path in site.glob(f"{package}*"):
             subprocess.run(["rm", "-rf", str(path)], check=True)
     stamp = own_state / "venv" / ".deps-stamp"
@@ -206,5 +179,5 @@ def test_a_wiped_site_packages_is_reinstalled_despite_a_matching_stamp(own_state
 
     again = _run(own_state)
     assert "installing dependencies" in again.stderr.lower()
-    lines = [line for line in again.stdout.splitlines() if line.strip()]
-    assert json.loads(lines[0])["jsonrpc"] == "2.0"
+    assert again.returncode == 0
+    assert again.stdout.startswith("usage: telegram")

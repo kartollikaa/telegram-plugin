@@ -164,7 +164,7 @@ def _hold_the_session(path, ready, release):
 
 
 def test_status_answers_instead_of_failing_when_the_session_is_in_use(tmp_path):
-    """A running MCP server holds the lock; asking for status must still answer."""
+    """Another Telegram command holds the lock; asking for status must still answer."""
     import multiprocessing as mp
     import subprocess
     import sys

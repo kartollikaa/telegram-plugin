@@ -1,7 +1,7 @@
 {
   "name": "telegram",
-  "version": "0.5.1",
-  "description": "Read your own Telegram account: dialogs, history, search and attachments. Sending is off unless TELEGRAM_PLUGIN_ALLOW_SEND=1.",
+  "version": "0.6.0",
+  "description": "Read your own Telegram account from a local agent: find a chat, read history, search and download attachments. Sending is off unless TELEGRAM_PLUGIN_ALLOW_SEND=1.",
   "author": {
     "name": "Dmitrii Maksimov",
     "url": "https://github.com/kartollikaa"
@@ -11,14 +11,9 @@
   "license": "MIT",
   "keywords": [
     "telegram",
-    "mcp",
     "telethon",
-    "messaging"
+    "messaging",
+    "cli"
   ],
-  "skills": "./skills/",
-  "mcpServers": {
-    "telegram": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/telegram-mcp"
-    }
-  }
+  "skills": "./skills/"
 }

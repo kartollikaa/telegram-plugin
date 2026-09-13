@@ -4,7 +4,7 @@ set -e
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
-DEPS="telethon>=1.42,<2 mcp>=2,<3"
+DEPS="telethon>=1.42,<2"
 
 mkdir -p "$STATE"
 chmod 700 "$STATE"
@@ -27,7 +27,7 @@ VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/pyproject.toml" | head -1)
 WANTED=$(digest "$DEPS|$VERSION")
 
 has_dependencies() {
-    "$1" -c 'import telethon, mcp' >/dev/null 2>&1
+    "$1" -c 'import telethon' >/dev/null 2>&1
 }
 
 refuse_to_delete_a_non_venv() {
@@ -61,7 +61,7 @@ install_into() {
 if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
     PYTHON=$TELEGRAM_PLUGIN_PYTHON
     if ! has_dependencies "$PYTHON"; then
-        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon and mcp." >&2
+        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon." >&2
         echo "[telegram-plugin] Install them there:" >&2
         echo "[telegram-plugin]   $PYTHON -m pip install $DEPS" >&2
         echo "[telegram-plugin] or unset the variable and let the plugin build its own." >&2

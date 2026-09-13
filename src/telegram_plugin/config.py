@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2", "mcp>=2,<3")
+DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2",)
 
 DEFAULT_STATE_SUBPATH = ".local/state/telegram-plugin"
 DEFAULT_SESSION_NAME = "telegram"

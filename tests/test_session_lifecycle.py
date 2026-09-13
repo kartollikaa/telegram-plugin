@@ -336,18 +336,16 @@ def test_a_negative_timeout_falls_back_instead_of_disabling_the_release():
     assert off.idle_timeout == 0.0, "zero stays a deliberate opt-out"
 
 
-async def test_the_server_hands_the_account_back_on_shutdown(tmp_path):
+async def test_the_cli_hands_the_account_back_when_the_command_ends(tmp_path):
     """Without this the process exits holding the account, and the operator's other
-    sessions keep being told it is busy by a server that no longer exists."""
-    from telegram_plugin.server import closing_lifespan
-
+    sessions keep being told it is busy by a process that no longer exists."""
     client = CountingClient()
     gateway, _ = _gateway(tmp_path, client, TELEGRAM_IDLE_TIMEOUT="30")
     await gateway.me()
     assert client.disconnects == 0
 
-    async with closing_lifespan(gateway)(None):
-        pass
+    arguments = build_parser().parse_args(["whoami"])
+    await _run(arguments, {"HOME": str(tmp_path)}, gateway_factory=lambda _config: gateway)
 
     assert client.disconnects == 1
     with session_lock(gateway._config.session_path):

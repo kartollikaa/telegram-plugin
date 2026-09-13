@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "telegram",
+  "version": "0.6.0",
+  "description": "Read your own Telegram account from a local agent: find a chat, read history, search, download attachments. Sending is off unless TELEGRAM_PLUGIN_ALLOW_SEND=1.",
+  "author": {
+    "name": "Dmitrii Maksimov",
+    "url": "https://github.com/kartollikaa"
+  },
+  "homepage": "https://github.com/kartollikaa/telegram-plugin",
+  "repository": "https://github.com/kartollikaa/telegram-plugin",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "telethon",
+    "messaging",
+    "cli",
+    "skills"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Telegram",
+        "shortDescription": "Read your own Telegram account from a local agent.",
+        "longDescription": "Finds chats, reads history and threads, searches across chats and downloads attachments through a JSON command-line interface, so an agent can summarise or extract without a per-task script. Runs as your own Telegram user, needs a local Python runtime, and cannot send unless you deliberately enable it.",
+        "developerName": "Dmitrii Maksimov",
+        "websiteURL": "https://github.com/kartollikaa/telegram-plugin"
+      }
+    }
+  }
+}

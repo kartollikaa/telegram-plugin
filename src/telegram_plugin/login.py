@@ -220,9 +220,9 @@ def _status_command(config: Config) -> int:
         payload["authorized"] = "unknown"
         payload["session_in_use"] = True
         payload["hint"] = (
-            "another process holds this session — almost certainly the plugin's own MCP "
-            "server, which means a session exists. Stop that client to re-check whether it "
-            "is still authorised."
+            "another process holds this session — almost certainly another Telegram "
+            "command or agent, which means a session exists. Let it finish to re-check "
+            "whether the session is still authorised."
         )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
