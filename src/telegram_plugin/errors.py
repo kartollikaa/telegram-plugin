@@ -64,6 +64,15 @@ class NotAMember(TelegramPluginError):
         )
 
 
+class EscapedOutput(TelegramPluginError):
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"The download landed at {path}, outside the directory it was given. Nothing was "
+            "returned. This should be impossible with telethon>=1.42; check which interpreter "
+            "TELEGRAM_PLUGIN_PYTHON points at."
+        )
+
+
 class NoSuchMedia(TelegramPluginError):
     code = "no_such_media"
 

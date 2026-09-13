@@ -39,6 +39,8 @@ For replies or a forum topic, use `thread CHAT ROOT_MESSAGE_ID --limit N` — co
 
 ## Reading, paging, and files
 
+A global `search` (no `--chat`) has no id cursor: it returns `next_cursor: null` and keeps
+Telegram's newest-first order. Narrow it with `--chat` or export it with `--out`.
 `read` returns ascending message ids. Continue it with `--min-id NEXT_CURSOR`;
 `search` returns a bounded page and continues backward with `--max-id NEXT_CURSOR`.
 Limits above the documented ceiling are rejected by the CLI. Narrow with `--since`,

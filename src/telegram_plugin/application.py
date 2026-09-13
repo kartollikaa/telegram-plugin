@@ -14,6 +14,12 @@ from telegram_plugin.paths import safe_output_dir, safe_output_path
 from telegram_plugin.refs import parse_chat_ref
 from telegram_plugin.render import DEFAULT_ITEMS, envelope
 
+GLOBAL_SEARCH_HINT = (
+    "a search across all chats has no id cursor — message ids are only ordered inside one "
+    "chat — so narrow it with --chat, or pass --out PATH with a larger --out-limit to write "
+    "the whole result to a JSONL file."
+)
+
 
 class TelegramApplication:
     def __init__(self, config: Config, gateway: TelegramGateway) -> None:
@@ -83,8 +89,16 @@ class TelegramApplication:
         }
         if out_path:
             target = safe_output_path(out_path, root=self.config.output_root)
-            batch = await self.gateway.history(ref, limit=out_limit, **criteria)
-            return write_jsonl(target, batch.rows)
+            batch = await self.gateway.history(ref, limit=out_limit + 1, **criteria)
+            rows = batch.rows[:out_limit]
+            over_limit = len(batch.rows) > out_limit
+            resume = rows[-1]["id"] if over_limit and rows else batch.last_scanned_id
+            return _export(
+                write_jsonl(target, rows),
+                truncated=over_limit or batch.scan_truncated,
+                scanned=batch.scanned,
+                resume=f"--min-id {resume}" if resume is not None else None,
+            )
 
         batch = await self.gateway.history(ref, limit=limit + 1, **criteria)
         return _forward_envelope(batch, limit)
@@ -102,11 +116,19 @@ class TelegramApplication:
         ref = parse_chat_ref(chat) if chat else None
         if out_path:
             target = safe_output_path(out_path, root=self.config.output_root)
-            batch = await self.gateway.search(query, ref, limit=out_limit, max_id=max_id)
-            return write_jsonl(target, batch.rows)
+            batch = await self.gateway.search(query, ref, limit=out_limit + 1, max_id=max_id)
+            rows = batch.rows[:out_limit]
+            return _export(
+                write_jsonl(target, rows),
+                truncated=len(batch.rows) > out_limit or batch.scan_truncated,
+                scanned=batch.scanned,
+                resume=None,
+            )
 
         batch = await self.gateway.search(query, ref, limit=limit + 1, max_id=max_id)
-        return _backward_envelope(batch, limit)
+        return _backward_envelope(
+            batch, limit, ignored_max_id=bool(max_id) and not batch.cursor_supported
+        )
 
     async def message(self, *, chat: str, message_id: int) -> dict:
         return await self.gateway.message(parse_chat_ref(chat), message_id)
@@ -154,13 +176,34 @@ class TelegramApplication:
         return await self.gateway.send(parse_chat_ref(chat), text, reply_to=reply_to)
 
 
+def _export(written: dict, *, truncated: bool, scanned: int, resume: str | None) -> dict:
+    """An export that stopped early must not look like a complete one."""
+    if not truncated:
+        return {**written, "complete": True}
+    continuation = f"continue with {resume} into another --out" if resume else "narrow the range"
+    return {
+        **written,
+        "complete": False,
+        "note": (
+            f"this file holds a prefix of the range rather than all of it, after scanning "
+            f"{scanned} messages — {continuation} and export again."
+        ),
+    }
+
+
 def _forward_envelope(batch: Batch, limit: int) -> dict:
+    """A scan that stopped at the cap has not reached the end of the range, so it says
+    `has_more` and hands back the last id it *looked at* — the filters may have accepted
+    nothing, leaving no returned row to continue from."""
     page = paginate([row["id"] for row in batch.rows], limit)
     items = batch.rows[: len(page.items)]
+    next_cursor = page.next_cursor
+    if batch.scan_truncated and next_cursor is None:
+        next_cursor = batch.last_scanned_id
     return envelope(
         items,
-        has_more=page.has_more,
-        next_cursor=page.next_cursor,
+        has_more=page.has_more or batch.scan_truncated,
+        next_cursor=next_cursor,
         cursor_field="min_id",
         scanned=batch.scanned,
         scan_truncated=batch.scan_truncated,
@@ -175,9 +218,24 @@ def _remaining(batch: Batch, returned: int) -> int | None:
     return max(batch.total - returned, 0)
 
 
-def _backward_envelope(batch: Batch, limit: int) -> dict:
+def _backward_envelope(batch: Batch, limit: int, *, ignored_max_id: bool = False) -> dict:
+    """A global search is not sorted by id at all — it keeps Telegram's newest-first
+    order, and no id is a usable cursor across chats."""
     rows = batch.rows
     has_more = len(rows) > limit
+    if not batch.cursor_supported:
+        result = envelope(
+            rows[:limit] if has_more else rows,
+            has_more=has_more,
+            next_cursor=None,
+            cursor_field="max_id",
+            scanned=batch.scanned,
+            no_cursor_hint=GLOBAL_SEARCH_HINT,
+        )
+        if ignored_max_id:
+            # Dropping an argument without saying so is how a caller concludes it paged.
+            result["note"] += " The --max-id given was ignored: it means nothing across chats."
+        return result
     items = rows[-limit:] if has_more else rows
     return envelope(
         items,
@@ -214,8 +272,9 @@ def _moment(text: str | None) -> datetime | None:
     ValueError escape reported it as `unexpected_error` with a raw Python message."""
     if not text:
         return None
+    normalised = f"{text[:-1]}+00:00" if text[-1] in "Zz" else text
     try:
-        parsed = datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(normalised)
     except ValueError:
         raise InvalidTimestamp(text) from None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

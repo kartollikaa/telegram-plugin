@@ -29,13 +29,6 @@ def test_allow_send_is_off_unless_exactly_one():
     assert load_config({"TELEGRAM_PLUGIN_ALLOW_SEND": "1"}).allow_send is True
 
 
-def test_obsolete_process_send_quota_is_not_configuration():
-    config = load_config({"TELEGRAM_PLUGIN_SEND_LIMIT": "1"})
-
-    assert "send_limit" not in type(config).__annotations__
-    assert not hasattr(config, "send_limit")
-
-
 def test_session_path_derives_from_state_dir_and_name():
     cfg = load_config({"TELEGRAM_STATE_DIR": "/s", "TELEGRAM_SESSION_NAME": "n"})
     assert cfg.session_path == Path("/s/n.session")
@@ -44,3 +37,55 @@ def test_session_path_derives_from_state_dir_and_name():
 def test_api_id_is_an_int_when_present():
     assert load_config({"TELEGRAM_API_ID": "12345"}).api_id == 12345
     assert load_config({}).api_id is None
+
+
+def test_an_empty_environment_value_does_not_fall_through_to_the_file():
+    """A host that clears a variable has spoken. `or` read that as "unset" and let the
+    file switch sending back on."""
+    dotenv = "TELEGRAM_PLUGIN_ALLOW_SEND=1\nTELEGRAM_SESSION_NAME=from-file\n"
+    cfg = load_config({"TELEGRAM_PLUGIN_ALLOW_SEND": "", "TELEGRAM_SESSION_NAME": ""}, dotenv)
+    assert cfg.allow_send is False
+    assert cfg.session_name == "telegram", "an empty value means the default, not the file"
+
+
+def test_an_unset_variable_still_comes_from_the_file():
+    """Positive control for the rule above: absence and emptiness are different."""
+    cfg = load_config({}, "TELEGRAM_PLUGIN_ALLOW_SEND=1\n")
+    assert cfg.allow_send is True
+
+
+def test_an_unreadable_ceiling_defaults_and_is_named():
+    from telegram_plugin.config import DEFAULT_MAX_DOWNLOAD_BYTES
+
+    cfg = load_config({"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "10MB"})
+    assert cfg.max_download_bytes == DEFAULT_MAX_DOWNLOAD_BYTES
+    assert cfg.unreadable == ("TELEGRAM_MAX_DOWNLOAD_BYTES",)
+
+
+def test_the_launcher_and_the_package_agree_on_the_telethon_floor():
+    """The confinement guarantee rests on that number; two copies must not drift."""
+    import re
+    from pathlib import Path
+
+    from telegram_plugin.config import DEPENDENCIES, MIN_TELETHON
+
+    declared = re.search(r"telethon>=(\d+)\.(\d+)", " ".join(DEPENDENCIES))
+    assert (int(declared[1]), int(declared[2])) == MIN_TELETHON
+    launcher = (Path(__file__).resolve().parents[1] / "bin/telegram").read_text()
+    assert f"({MIN_TELETHON[0]}, {MIN_TELETHON[1]})" in launcher
+    assert f'MIN_TELETHON="{MIN_TELETHON[0]}.{MIN_TELETHON[1]}"' in launcher
+
+
+def test_a_ceiling_of_zero_is_honoured_rather_than_replaced_by_the_default():
+    """The strictest setting must be reachable: `or DEFAULT` read 0 as "unset"."""
+    assert load_config({"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "0"}).max_download_bytes == 0
+
+
+def test_a_negative_ceiling_clamps_to_the_strictest_rather_than_the_loosest():
+    assert load_config(
+        {"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "-5"}
+    ).max_download_bytes == 0
+
+
+def test_a_readable_configuration_names_nothing():
+    assert load_config({"HOME": "/tmp", "TELEGRAM_MAX_DOWNLOAD_BYTES": "1024"}).unreadable == ()

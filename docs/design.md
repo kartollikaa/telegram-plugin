@@ -320,6 +320,11 @@ The constraints are part of the contract, not advice:
   here, and is not a count at all for a global search — it will cheerfully report
   tens of thousands of matches for a word that appears in nearly every message.
   Where the number would be invented, the note says so instead.
+- **A global search has no cursor.** Message ids are ordered inside one chat and
+  not across them, and `searchGlobal` resumes on an offset rate and peer that no
+  argument here carries. Returning an id cursor would silently drop every match
+  above it elsewhere, so a global search keeps Telegram's own order and says it
+  has none.
 - **Cursor pagination by id**, in whichever direction the operation runs. `read`
   goes forward, so `next_cursor` is the highest id returned and the caller
   continues with `--min-id`. `search` returns newest first, so its `next_cursor`

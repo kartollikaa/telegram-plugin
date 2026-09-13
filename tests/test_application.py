@@ -89,16 +89,20 @@ async def test_existing_operation_payload_parity(tmp_path, operation):
             ),
         }
     elif operation == "search":
+        # No --chat, so this is a global search: ids are ordered only inside one
+        # chat, so Telegram's newest-first order is kept and no id is offered as a
+        # cursor. Handing one back would silently drop every match above it.
         actual = await application.search(query="message", limit=3)
         expected = {
-            "items": [_message(10), _message(11), _message(12, media=True)],
+            "items": [_message(12, media=True), _message(11), _message(10)],
             "returned": 3,
             "has_more": True,
-            "next_cursor": 10,
+            "next_cursor": None,
             "note": (
                 "3 returned, more available (the count in this range is not known without "
-                "scanning it) — continue with --max-id 10, or pass --out PATH to write the whole "
-                "range to a JSONL file instead of into this conversation."
+                "scanning it) — a search across all chats has no id cursor — message ids are "
+                "only ordered inside one chat — so narrow it with --chat, or pass --out PATH "
+                "with a larger --out-limit to write the whole result to a JSONL file."
             ),
         }
     elif operation == "download":
@@ -128,15 +132,17 @@ async def test_wide_reads_return_jsonl_metadata(tmp_path, operation):
         result = await application.search(query="message", out_path="exports/messages.jsonl")
 
     target = tmp_path / "output" / "exports" / "messages.jsonl"
+    # A global search keeps Telegram's own newest-first order: ids are only ordered
+    # inside one chat, so re-sorting them would imply a sequence that does not exist.
+    ids = list(range(1, 13)) if operation == "read" else list(range(12, 0, -1))
     assert result == {
         "path": str(target),
         "lines": 12,
-        "first_id": 1,
-        "last_id": 12,
+        "first_id": ids[0],
+        "last_id": ids[-1],
+        "complete": True,
     }
-    assert [json.loads(line)["id"] for line in target.read_text().splitlines()] == list(
-        range(1, 13)
-    )
+    assert [json.loads(line)["id"] for line in target.read_text().splitlines()] == ids
 
 
 async def test_send_is_refused_before_gateway_access(tmp_path):

@@ -67,7 +67,7 @@ def render_message(
     reply = _describe_reply(getattr(message, "reply_to", None), chat_username, chat_internal_id)
     if reply:
         rendered["reply_to"] = reply
-    media = _describe_media(getattr(message, "media", None))
+    media = _describe_media(message)
     if media:
         rendered["media"] = media
     return rendered
@@ -105,56 +105,22 @@ def _reply_link(
     return message_link(None, channel_id, message_id) if channel_id else None
 
 
-def _describe_media(media: Any) -> dict | None:
-    """Telethon keeps a document's metadata on `media.document` and its name in
-    `document.attributes`, never on the media wrapper. Reading the wrapper — as
-    this did — returns a null name and a null size for every real attachment,
-    which also means `safe_name` never runs on the one string the sender picked."""
+def _describe_media(message: Any) -> dict | None:
+    """Name, size and mime type live on the document or photo, never on the media wrapper.
+
+    `Message.file` is Telethon's own resolver for that, and it is `None` for media that is
+    not a file at all — a poll, a location, a link preview — which still gets a type.
+    """
+    media = getattr(message, "media", None)
     if media is None:
         return None
-    document = getattr(media, "document", None)
-    file_name = _document_file_name(document)
-    size = _first_known(
-        getattr(media, "size", None),
-        getattr(document, "size", None),
-        _largest_photo_size(media),
-    )
-    mime = getattr(media, "mime_type", None) or getattr(document, "mime_type", None)
+    file = getattr(message, "file", None)
+    name = getattr(file, "name", None)
     return {
-        "type": mime or type(media).__name__,
-        "file_name": safe_name(file_name) if file_name else None,
-        "size": size,
+        "type": getattr(file, "mime_type", None) or type(media).__name__,
+        "file_name": safe_name(name) if name else None,
+        "size": getattr(file, "size", None),
     }
-
-
-def _document_file_name(document: Any) -> str | None:
-    for attribute in getattr(document, "attributes", None) or ():
-        name = getattr(attribute, "file_name", None)
-        if name:
-            return name
-    return None
-
-
-def _first_known(*candidates: int | None) -> int | None:
-    """`or` would read a zero-byte attachment as "size unknown"."""
-    return next((value for value in candidates if isinstance(value, int)), None)
-
-
-def _largest_photo_size(media: Any) -> int | None:
-    """A photo has no single size; the largest rendition is the honest answer.
-
-    The largest rendition of a modern photo is a `PhotoSizeProgressive`, which
-    carries `sizes: list[int]` and no `size` at all — reading only `.size` skips
-    it and under-reports by an order of magnitude.
-    """
-    known: list[int] = []
-    for rendition in getattr(getattr(media, "photo", None), "sizes", None) or ():
-        single = getattr(rendition, "size", None)
-        if isinstance(single, int):
-            known.append(single)
-        progressive = getattr(rendition, "sizes", None) or ()
-        known.extend(value for value in progressive if isinstance(value, int))
-    return max(known) if known else None
 
 
 def _flag(cursor_field: str) -> str:
@@ -172,22 +138,9 @@ def envelope(
     scan_truncated: bool = False,
     remaining: int | None = None,
     total: int | None = None,
+    no_cursor_hint: str | None = None,
 ) -> dict:
-    """`note` states the remaining count when it is known, and says so when it is not.
-
-    Every flag the note names carries the value to pass with it. A note that says
-    "continue with --min-id" and stops is an instruction that exits 2, which is
-    worse than saying nothing: the agent follows it and loses the page.
-    """
-    # A truncated scan means more may exist even when this page filled short of
-    # its limit, and the id to resume from is known whenever anything came back.
-    continuable = has_more or (scan_truncated and bool(items))
-    if continuable and next_cursor is None and items:
-        # Direction matters: a forward page resumes after its highest id, a
-        # backward one before its lowest. Taking the last id either way hands a
-        # backward caller the page it just read, forever.
-        next_cursor = items[0]["id"] if cursor_field == "max_id" else items[-1]["id"]
-
+    """`note` states the remaining count when it is known, and says so when it is not."""
     if has_more:
         if remaining is not None:
             left = f"{remaining} more available"
@@ -195,32 +148,17 @@ def envelope(
             left = f"more available (this chat holds {total} messages in total)"
         else:
             left = "more available (the count in this range is not known without scanning it)"
-        resume = (
-            f"continue with {_flag(cursor_field)} {next_cursor}"
-            if next_cursor is not None
-            else "ask again with a narrower range"
-        )
-        note = (
-            f"{len(items)} returned, {left} — {resume}, or pass --out PATH to write the "
-            "whole range to a JSONL file instead of into this conversation."
-        )
-        if scan_truncated:
-            note += (
-                f" The scan also stopped at {scanned} messages, so anything counted "
-                "above is a floor rather than a total."
+        if next_cursor is not None:
+            continuation = (
+                f"continue with {_flag(cursor_field)} {next_cursor}, or pass --out PATH to "
+                "write the whole range to a JSONL file instead of into this conversation."
             )
-    elif scan_truncated and items:
-        note = (
-            f"{len(items)} returned, and the scan stopped at {scanned} messages before "
-            f"reaching the end of the range — more may exist. Continue with "
-            f"{_flag(cursor_field)} {next_cursor}."
-        )
-    elif scan_truncated:
-        note = (
-            f"nothing matched in the first {scanned} messages, and the scan stopped "
-            "there rather than reaching the end of the range — narrow it with --since "
-            "or --until and ask again."
-        )
+        else:
+            continuation = no_cursor_hint or (
+                "pass --out PATH to write the whole range to a JSONL file instead of into "
+                "this conversation."
+            )
+        note = f"{len(items)} returned, {left} — {continuation}"
     elif items:
         note = f"{len(items)} returned; nothing left in this range."
     elif scanned:
@@ -230,6 +168,11 @@ def envelope(
         )
     else:
         note = "nothing in this range."
+    if scan_truncated:
+        note += (
+            f" Scanning stopped at {scanned} messages to stay cheap, so this is not the end of "
+            "the range: continue from the cursor above, or narrow the range and ask again."
+        )
     result = {
         "items": items,
         "returned": len(items),

@@ -161,8 +161,10 @@ operation and prints one JSON object.
 Add `--reply-to MESSAGE_ID` to answer a specific message rather than posting a new one.
 
 `read` accepts `--min-id`, `--max-id`, `--since`, `--until`, `--from-user` and
-`--media-only`; `thread` accepts `--min-id` to continue past its first page; `search` pages backwards on `--max-id`, because search results
-arrive newest first. Both accept `--out` to write JSONL instead of returning rows.
+`--media-only`; `thread` accepts `--min-id` to continue past its first page; `search` inside one chat pages backwards on `--max-id`, because results arrive
+newest first. A search **across all chats has no id cursor at all** — ids are only
+ordered within a chat, so any cursor would silently drop every match above it.
+Narrow it with `--chat`, or export it with `--out`. Both accept `--out` to write JSONL instead of returning rows.
 `--since` and `--until` are inclusive at the instant they name, and a bare date
 means midnight — so `--until 2026-01-03` stops before that day rather than
 including it. Pass a time when you mean a whole day.
@@ -296,11 +298,16 @@ do damage on a misread instruction.
   (default 1000, maximum 5000). **It stops at the limit without saying so** — the
   reply looks the same as a complete export, so compare `lines` against what you
   expected before treating a dump as the whole range.
-- **Paging is by cursor.** `read` moves forward: `next_cursor` is the last (highest)
-  id returned, and you continue with `--min-id`. `search` moves backward, newest
-  first: its `next_cursor` is the first (lowest) id returned, and you continue with
-  `--max-id`. You do not have to remember which: the `note` on every continuable
-  page names the exact flag to pass next.
+- **Paging is by cursor, where one exists.** `read` moves forward: continue with
+  `--min-id`. `search` in one chat moves backward: continue with `--max-id`. A
+  global search returns `next_cursor: null` and says why. You do not have to
+  remember which: the `note` on every continuable page names the flag to pass.
+- **A capped scan is not an exhausted range.** `since`, `until` and `--media-only`
+  are applied here rather than by Telegram, so a wide range is scanned in bounded
+  steps; when the scan stops at its ceiling the reply keeps `has_more` true and
+  hands back the last id it looked at, even if the filters accepted nothing.
+- **An export says whether it is complete.** `--out` returns `complete`, and when
+  false a note with the point to resume from.
 - **Writes are confined.** `--out` and `--dest-dir` must stay inside
   `TELEGRAM_OUTPUT_ROOT` (by default the state directory's `downloads/`), and an
   existing file is never overwritten silently.

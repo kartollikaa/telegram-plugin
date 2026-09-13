@@ -116,6 +116,38 @@ async def test_a_live_token_is_not_reissued_needlessly(tmp_path):
     assert client.qr.recreated == 0, "re-requesting a live login token costs an API call"
 
 
+async def test_the_session_file_is_tightened_before_the_wait_not_after(tmp_path):
+    """Telethon creates it with the plain umask on construction and the auth key lands in
+    it while we sit here, so chmodding only on success left it readable for the whole wait."""
+    config = _config(tmp_path)
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    config.session_path.write_bytes(b"")
+    config.session_path.chmod(0o644)
+    seen = []
+
+    class Watching(StubClient):
+        async def qr_login(self):
+            qr = await super().qr_login()
+
+            async def wait(timeout=None):
+                seen.append(stat.S_IMODE(config.session_path.stat().st_mode))
+                raise asyncio.TimeoutError
+
+            qr.wait = wait
+            return qr
+
+    await qr_login(config, Watching(), timeout=0.01, attempts=1)
+    assert seen == [0o600]
+
+
+async def test_every_payload_is_stamped_so_a_stale_file_is_visible(tmp_path):
+    config = _config(tmp_path)
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    written = write_status(config, {"state": "waiting"})
+    assert "written" in written
+    assert json.loads(config.auth_status_path.read_text())["written"] == written["written"]
+
+
 async def test_the_status_file_is_private(tmp_path):
     config = _config(tmp_path)
     config.state_dir.mkdir(parents=True, exist_ok=True)

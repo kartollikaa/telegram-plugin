@@ -5,36 +5,30 @@ This is deliberately one level below `tests/fakes.py`: the earlier fake modelled
 filtering as if Telegram did it server-side, which is exactly what hid a bug
 where `since`/`until`/`media_only` were applied after a fixed-size page had
 already been fetched. Only `iter_messages` is stubbed, and it is stubbed to
-behave the way Telethon documents it: `limit` bounds the API page, and
-`reverse=True` yields oldest first.
+behave the way Telethon documents it: `limit` bounds the API page, `from_user`
+is applied by Telegram, and `reverse=True` yields oldest first.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 from telethon.tl.types import MessageReplyHeader
 
-from telegram_plugin.client import TelethonGateway
+from telegram_plugin.client import MAX_SCAN_CAP, TelethonGateway, _scan_cap
 from telegram_plugin.config import load_config
 from telegram_plugin.refs import parse_chat_ref
+from tests.telethon_doubles import EPOCH, document_message, plain_message
 
-EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
 TOTAL = 1000
 
 
 def _message(index: int):
-    return SimpleNamespace(
-        id=index,
-        date=EPOCH + timedelta(days=index),
-        message=f"message {index}",
-        sender_id=1,
-        media=SimpleNamespace(mime_type="application/pdf", file_name="d.pdf", size=10)
-        if index % 200 == 0
-        else None,
-        sender=None,
-        reply_to=None,
-    )
+    body = {"message": f"message {index}", "sender_id": 1 + (index % 2)}
+    if index % 200 == 0:
+        return document_message(index, name="d.pdf", size=10, **body,
+                                date=EPOCH + timedelta(days=index))
+    return plain_message(index, **body, date=EPOCH + timedelta(days=index))
 
 
 class FakeTelethonClient:
@@ -43,8 +37,10 @@ class FakeTelethonClient:
     def __init__(self, count: int = TOTAL) -> None:
         self.all = [_message(i) for i in range(1, count + 1)]
         self.pages_served = 0
+        self.last_kwargs: dict = {}
 
     def iter_messages(self, entity, **kwargs):
+        self.last_kwargs = kwargs
         selected = self.all
         min_id = kwargs.get("min_id") or 0
         max_id = kwargs.get("max_id") or 0
@@ -54,6 +50,10 @@ class FakeTelethonClient:
             selected = [m for m in selected if m.id < max_id]
         if kwargs.get("search"):
             selected = [m for m in selected if kwargs["search"] in m.message]
+        # Telegram applies from_user, so the double must too — pretending otherwise made
+        # the loop exit on `limit` and left the scan cap completely unexercised.
+        if kwargs.get("from_user") is not None:
+            selected = [m for m in selected if m.sender_id == kwargs["from_user"]]
         if not kwargs.get("reverse"):
             selected = list(reversed(selected))
         limit = kwargs.get("limit")
@@ -109,6 +109,16 @@ async def test_media_only_returns_the_media_that_exists(gateway):
     assert all("media" in row for row in batch.rows)
 
 
+async def test_media_metadata_survives_the_whole_gateway_path(gateway):
+    instance, _ = gateway
+    batch = await instance.history(REF, limit=1, media_only=True)
+    assert batch.rows[0]["media"] == {
+        "type": "application/pdf",
+        "file_name": "d.pdf",
+        "size": 10,
+    }
+
+
 async def test_the_limit_bounds_accepted_rows_not_the_fetched_page(gateway):
     instance, _ = gateway
     batch = await instance.history(REF, limit=3, media_only=True)
@@ -136,8 +146,50 @@ async def test_a_reply_reaches_the_row_the_gateway_returns(gateway):
     assert "reply_to" not in rows[7]
 
 
-async def test_the_scan_is_bounded(gateway):
+async def test_from_user_is_handed_to_telegram_rather_than_filtered_here(gateway):
+    """It is a server-side filter; applying it locally would burn the scan budget."""
     instance, client = gateway
-    client.all = [_message(i) for i in range(1, 100_000)]
-    batch = await instance.history(REF, limit=5, media_only=False, from_user="nobody-matches")
-    assert batch.scanned <= 20_000
+    batch = await instance.history(REF, limit=5, from_user=2)
+    assert client.last_kwargs["from_user"] == 2
+    assert [row["sender_id"] for row in batch.rows] == [2] * 5
+
+
+# The cap exists for the case where the filters reject message after message. Checking it
+# only after an accepted row made it unreachable exactly then: measured before the fix, a
+# `since` scan over 100 000 messages looked at 99 000 of them, against a cap of 20 000.
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        {"since": EPOCH + timedelta(days=99_000)},
+        {"media_only": True},
+    ],
+    ids=["since", "media_only"],
+)
+async def test_the_scan_is_bounded_when_the_filters_reject_message_after_message(
+    gateway, criteria
+):
+    instance, client = gateway
+    client.all = [plain_message(i, message="x", sender_id=1, date=EPOCH + timedelta(days=i))
+                  for i in range(1, 100_000)]
+    batch = await instance.history(REF, limit=5, **criteria)
+    assert batch.scan_truncated is True
+    assert batch.scanned == _scan_cap(5)
+    assert batch.scanned <= MAX_SCAN_CAP
+
+
+async def test_a_truncated_scan_says_where_it_stopped(gateway):
+    """With nothing accepted there is no returned row to resume from, so the last id the
+    scan looked at is the only cursor there is."""
+    instance, client = gateway
+    client.all = [plain_message(i, message="x", sender_id=1, date=EPOCH + timedelta(days=i))
+                  for i in range(1, 100_000)]
+    batch = await instance.history(REF, limit=5, media_only=True)
+    assert batch.rows == []
+    assert batch.last_scanned_id == batch.scanned
+
+
+async def test_an_untruncated_scan_still_reports_its_last_id(gateway):
+    instance, _ = gateway
+    batch = await instance.history(REF, limit=3)
+    assert batch.scan_truncated is False
+    assert batch.last_scanned_id == 3

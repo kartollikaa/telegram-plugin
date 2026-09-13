@@ -126,7 +126,7 @@ def test_all_read_commands_dispatch(capsys, tmp_path):
         (["message", "@alpha", "4"], lambda value: value["id"] == 4),
         (["thread", "@alpha", "10", "--limit", "1"], lambda value: value["items"][0]["id"] == 3),
         (["read", "@alpha", "--limit", "2"], lambda value: value["next_cursor"] == 2),
-        (["search", "message", "--limit", "2"], lambda value: [row["id"] for row in value["items"]] == [11, 12]),
+        (["search", "message", "--limit", "2"], lambda value: [row["id"] for row in value["items"]] == [12, 11]),
         (
             ["download", "@alpha", "4", "--dest-dir", "attachments"],
             lambda value: value["path"].endswith("attachments/4.pdf"),
@@ -248,8 +248,17 @@ def test_search_contract_matrix(capsys, tmp_path, chat):
     payload = json.loads(captured.out)
 
     assert code == 0
-    assert [row["id"] for row in payload["items"]] == [10, 11, 12]
-    assert payload["next_cursor"] == 10
+    if chat:
+        # Inside one chat ids are ordered, so the page is ascending and pages back
+        # on the oldest id it returned.
+        assert [row["id"] for row in payload["items"]] == [10, 11, 12]
+        assert payload["next_cursor"] == 10
+    else:
+        # Across chats they are not: Telegram's newest-first order is kept and no
+        # cursor is offered, because any id would drop every match above it.
+        assert [row["id"] for row in payload["items"]] == [12, 11, 10]
+        assert payload["next_cursor"] is None
+        assert "no id cursor" in payload["note"]
     assert ("remaining" in payload) is bool(chat)
 
 

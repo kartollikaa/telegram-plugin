@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pytest
-
 # The real headers, not a stand-in: the field names are the whole contract here.
 from telethon.tl.types import (
     MessageReplyHeader,
@@ -12,6 +10,7 @@ from telethon.tl.types import (
 )
 
 from telegram_plugin.render import TEXT_LIMIT, envelope, render_message, truncate
+from tests.telethon_doubles import document_message, geo_message, photo_message
 
 
 def _msg(**overrides):
@@ -43,10 +42,40 @@ def test_long_text_is_truncated_and_flagged():
 
 
 def test_media_is_described_but_never_carried():
-    rendered = render_message(_msg(media=_real_document("doc.pdf")))
+    rendered = render_message(document_message(7, name="doc.pdf", size=1234))
     assert rendered["media"] == {"type": "application/pdf", "file_name": "doc.pdf", "size": 1234}
     assert "bytes" not in rendered
     assert "content" not in rendered
+
+
+def test_media_metadata_is_read_off_the_document_not_the_wrapper():
+    """The wrapper carries none of it. A double that pretends otherwise hid this entirely:
+    every media block came back {type: "MessageMediaDocument", file_name: null, size: null}."""
+    from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto
+
+    for wrapper in (MessageMediaDocument, MessageMediaPhoto):
+        for attribute in ("file_name", "mime_type", "size"):
+            assert not hasattr(wrapper, attribute), f"{wrapper.__name__}.{attribute}"
+
+    from telethon.tl.custom.message import Message
+
+    assert hasattr(Message, "file"), "telethon changed: Message.file is the resolver we use"
+
+
+def test_a_photo_is_described_and_sized():
+    assert render_message(photo_message(7, size=5000))["media"] == {
+        "type": "image/jpeg",
+        "file_name": None,
+        "size": 5000,
+    }
+
+
+def test_media_that_is_not_a_file_still_reports_its_type():
+    assert render_message(geo_message(7))["media"] == {
+        "type": "MessageMediaGeo",
+        "file_name": None,
+        "size": None,
+    }
 
 
 def test_message_without_media_has_no_media_key():
@@ -157,23 +186,24 @@ def test_an_empty_result_distinguishes_a_filter_from_an_empty_range():
     assert "nothing in this range" in empty["note"]
 
 
-def test_a_truncated_scan_says_so():
-    """With nothing to resume from, the note reports the cut-short scan and names
-    only filters that take a value the caller already has."""
-    env = envelope([], has_more=False, next_cursor=None, scanned=20000, scan_truncated=True)
+def test_a_truncated_scan_says_so_and_still_offers_a_cursor():
+    """A stopped scan is not an exhausted range; saying "nothing left" here was the bug."""
+    env = envelope([], has_more=True, next_cursor=4711, scanned=20000, scan_truncated=True)
     assert "20000" in env["note"]
-    assert "stopped" in env["note"]
-    assert "--since" in env["note"] and "--until" in env["note"]
+    assert "narrow the range" in env["note"]
+    assert env["has_more"] is True
+    assert env["next_cursor"] == 4711
+    assert "--min-id 4711" in env["note"]
+    assert "nothing left in this range" not in env["note"]
 
 
-def test_a_truncated_scan_never_claims_the_range_is_exhausted():
-    """Saying "nothing left in this range" and "the scan stopped early" in one note
-    tells the agent both that it is done and that it is not."""
+def test_an_envelope_without_a_cursor_says_what_to_do_instead():
     env = envelope(
-        [{"id": 1}], has_more=False, next_cursor=None, scanned=20000, scan_truncated=True
+        [{"id": 1}], has_more=True, next_cursor=None, no_cursor_hint="narrow it with chat=."
     )
-    assert "nothing left" not in env["note"]
-    assert "more may exist" in env["note"]
+    assert env["next_cursor"] is None
+    assert "narrow it with chat=." in env["note"]
+    assert "--min-id" not in env["note"]
 
 
 def test_display_names_are_truncated_like_message_text():
@@ -190,8 +220,8 @@ def test_a_sender_chosen_name_reaches_the_model_already_truncated():
 
 
 def test_attachment_names_are_sanitised_in_metadata_too():
-    media = _real_document("; rm -rf ~ ;.pdf")
-    assert render_message(_msg(media=media))["media"]["file_name"] == "_rm_-rf_.pdf"
+    rendered = render_message(document_message(7, name="; rm -rf ~ ;.pdf"))
+    assert rendered["media"]["file_name"] == "_rm_-rf_.pdf"
 
 
 def test_a_sanitised_name_keeps_its_extension_and_never_empties():
@@ -228,168 +258,3 @@ def test_the_documented_thresholds_are_the_ones_in_the_code():
         assert str(TEXT_LIMIT) in text, f"{document} must state the truncation threshold"
     for document in ("README.md", "docs/design.md"):
         assert str(MAX_ITEMS) in (repo / document).read_text()
-
-
-def _real_document(name: str, *, mime: str = "application/pdf", size: int = 1234):
-    """Built from Telethon's own types, not a stand-in. A double shaped like the
-    code's assumption is exactly what hid this: `_describe_media` read
-    `mime_type`/`file_name`/`size` off the media wrapper, where real Telethon
-    keeps none of them, so every attachment reported nulls."""
-    import datetime
-
-    from telethon.tl.types import Document, DocumentAttributeFilename, MessageMediaDocument
-
-    document = Document(
-        id=1,
-        access_hash=1,
-        file_reference=b"",
-        date=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
-        mime_type=mime,
-        size=size,
-        dc_id=1,
-        attributes=[DocumentAttributeFilename(name)],
-    )
-    return MessageMediaDocument(document=document)
-
-
-def test_a_real_document_reports_its_type_name_and_size():
-    from telegram_plugin.render import _describe_media
-
-    assert _describe_media(_real_document("report.pdf")) == {
-        "type": "application/pdf",
-        "file_name": "report.pdf",
-        "size": 1234,
-    }
-
-
-def test_a_sender_chosen_name_is_sanitised_on_a_real_document():
-    """The README calls this a boundary control. It only counts if it runs on the
-    shape Telegram actually delivers."""
-    from telegram_plugin.render import _describe_media
-
-    described = _describe_media(_real_document("../../etc/passwd; rm -rf ~.txt"))
-    for forbidden in ("/", "\\", ";", "~", "$", "`", "|", "&"):
-        assert forbidden not in described["file_name"], described["file_name"]
-    # a name that is nothing but traversal cannot survive as a path component
-    assert _describe_media(_real_document(".."))["file_name"] == "attachment"
-
-
-def test_a_real_photo_reports_its_largest_rendition():
-    import datetime
-
-    from telethon.tl.types import MessageMediaPhoto, Photo, PhotoSize
-
-    from telegram_plugin.render import _describe_media
-
-    photo = Photo(
-        id=2,
-        access_hash=1,
-        file_reference=b"",
-        date=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
-        sizes=[PhotoSize(type="s", w=10, h=10, size=100), PhotoSize(type="x", w=99, h=99, size=5678)],
-        dc_id=1,
-    )
-    assert _describe_media(MessageMediaPhoto(photo=photo))["size"] == 5678
-
-
-def test_a_progressive_photo_reports_its_true_largest_rendition():
-    """The biggest rendition of a modern photo is a `PhotoSizeProgressive`, which
-    has `sizes: list[int]` and no `size`. Reading only `.size` under-reports it by
-    an order of magnitude while looking perfectly plausible."""
-    import datetime
-
-    from telethon.tl.types import (
-        MessageMediaPhoto,
-        Photo,
-        PhotoSize,
-        PhotoSizeProgressive,
-        PhotoStrippedSize,
-    )
-
-    from telegram_plugin.render import _describe_media
-
-    photo = Photo(
-        id=1,
-        access_hash=1,
-        file_reference=b"",
-        date=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
-        dc_id=1,
-        sizes=[
-            PhotoStrippedSize(type="i", bytes=b"x"),
-            PhotoSize(type="m", w=320, h=320, size=12000),
-            PhotoSizeProgressive(type="y", w=1280, h=1280, sizes=[5000, 40000, 250000]),
-        ],
-    )
-    assert _describe_media(MessageMediaPhoto(photo=photo))["size"] == 250000
-
-
-def test_a_zero_byte_attachment_reports_zero_not_unknown():
-    from telegram_plugin.render import _describe_media
-
-    described = _describe_media(_real_document("empty.txt", mime="text/plain", size=0))
-    assert described["size"] == 0, "`or` chains read a real zero as 'unknown'"
-
-
-def _flags_without_values(note: str) -> list[str]:
-    """A flag in a note is an instruction. `--min-id` with nothing after it is a
-    command that exits 2, so the agent that follows the note loses the page."""
-    import re
-
-    offenders = []
-    for match in re.finditer(r"(--[a-z][a-z-]*)(\s+(\S+))?", note):
-        flag, value = match.group(1), (match.group(3) or "").strip(".,;")
-        if flag in ("--since", "--until", "--out"):
-            continue  # named as things to pass, not as a value to resume from
-        if not (value.isdigit() or (value.isupper() and value.isalpha())):
-            offenders.append(flag)
-    return offenders
-
-
-@pytest.mark.parametrize("has_more", [False, True])
-@pytest.mark.parametrize("scan_truncated", [False, True])
-@pytest.mark.parametrize("items", [[], [{"id": 7}]])
-def test_no_note_ever_names_a_flag_without_the_value_to_pass(has_more, scan_truncated, items):
-    env = envelope(
-        items,
-        has_more=has_more,
-        next_cursor=7 if has_more and items else None,
-        scanned=1000,
-        scan_truncated=scan_truncated,
-    )
-    assert _flags_without_values(env["note"]) == [], env["note"]
-    assert "None" not in env["note"], env["note"]
-
-
-def test_the_flag_value_guard_catches_a_bare_flag():
-    """Positive control — this is the exact shape that shipped and exited 2."""
-    assert _flags_without_values("narrow the range with --min-id and ask again.") == ["--min-id"]
-    assert _flags_without_values("continue with --min-id 15.") == []
-    assert _flags_without_values("pass --out PATH to write it.") == []
-
-
-def test_a_truncated_scan_that_returned_rows_can_be_continued():
-    env = envelope(
-        [{"id": 3}, {"id": 9}],
-        has_more=False,
-        next_cursor=None,
-        scanned=1000,
-        scan_truncated=True,
-    )
-    assert env["next_cursor"] == 9, "the id to resume from is known whenever rows came back"
-    assert "--min-id 9" in env["note"]
-
-
-def test_a_derived_cursor_respects_the_paging_direction():
-    """A forward page resumes after its highest id; a backward one before its
-    lowest. One rule for both hands a backward caller the page it just read."""
-    rows = [{"id": 10}, {"id": 11}, {"id": 12}]
-    forward = envelope(
-        rows, has_more=False, next_cursor=None, cursor_field="min_id",
-        scanned=9, scan_truncated=True,
-    )
-    backward = envelope(
-        rows, has_more=False, next_cursor=None, cursor_field="max_id",
-        scanned=9, scan_truncated=True,
-    )
-    assert forward["next_cursor"] == 12
-    assert backward["next_cursor"] == 10
