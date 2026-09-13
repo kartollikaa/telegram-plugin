@@ -87,6 +87,17 @@ class MessageNotFound(TelegramPluginError):
         super().__init__(f"Message {message_id} was not found in that chat.")
 
 
+class NoThread(TelegramPluginError):
+    code = "no_thread"
+
+    def __init__(self, message_id: int) -> None:
+        super().__init__(
+            f"Message {message_id} has no thread. Only a forum topic root or a channel post "
+            "with a discussion group has replies to read; for an ordinary message, read the "
+            "surrounding history instead."
+        )
+
+
 class MediaTooLarge(TelegramPluginError):
     code = "media_too_large"
 
