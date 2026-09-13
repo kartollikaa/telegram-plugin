@@ -41,7 +41,7 @@ def test_portable_manifest_is_canonical():
     manifest = _manifest(PORTABLE)
     assert manifest["$schema"] == SCHEMA
     assert manifest["name"] == "telegram"
-    assert manifest["version"] == "0.6.0"
+    assert manifest["version"] == _package_version()
     assert manifest["description"]
     # A portable package always discovers skills/ itself; a declaration here
     # cannot add to or override that, so claiming one would only mislead.
@@ -69,12 +69,16 @@ def test_claude_manifest_is_skills_only():
 
 
 def test_versions_agree():
+    """`pyproject.toml` is the one home for the number; the manifests follow it.
+    Asserting a literal here only created a fourth copy to forget."""
+    declared = _package_version()
     versions = {
-        _package_version(),
+        declared,
         _manifest(PORTABLE)["version"],
         _manifest(CLAUDE)["version"],
     }
-    assert versions == {"0.6.0"}, versions
+    assert versions == {declared}, versions
+    assert re.fullmatch(r"\d+\.\d+\.\d+", declared), declared
 
 
 def test_runtime_dependencies_are_telethon_only():
