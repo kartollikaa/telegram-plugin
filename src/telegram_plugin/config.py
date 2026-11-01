@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2",)
+DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2", "segno>=1.6,<2")
 
 # Below this, Telethon honoured an absolute path in a sender-supplied file name.
 MIN_TELETHON = (1, 42)
