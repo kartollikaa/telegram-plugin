@@ -1,5 +1,5 @@
 """Packaging contract: one portable manifest, one Claude compatibility manifest,
-and a runtime that installs Telethon and nothing else."""
+and a runtime that installs Telethon and a QR renderer, nothing else."""
 
 import json
 import re
@@ -81,17 +81,19 @@ def test_versions_agree():
     assert re.fullmatch(r"\d+\.\d+\.\d+", declared), declared
 
 
-def test_runtime_dependencies_are_telethon_only():
+def test_runtime_dependencies_are_telethon_and_the_qr_renderer_only():
     from telegram_plugin.config import DEPENDENCIES
 
-    assert all(name.startswith("telethon") for name in DEPENDENCIES), DEPENDENCIES
+    names = {re.match(r"[a-z]+", name)[0] for name in DEPENDENCIES}
+    assert names == {"telethon", "segno"}, DEPENDENCIES
 
     dependencies = re.search(
         r"^dependencies = \[(.*?)\]",
         (REPO / "pyproject.toml").read_text(),
         re.MULTILINE | re.DOTALL,
     )[1]
-    assert "telethon" in dependencies
+    for dependency in DEPENDENCIES:
+        assert f'"{dependency}"' in dependencies, dependency
     assert "mcp" not in dependencies.lower()
 
 

@@ -50,11 +50,27 @@ LOGIN_SKILL_TEXT = (REPO / "skills/login/SKILL.md").read_text()
 
 
 def test_the_login_skill_drives_the_flow_itself():
-    """It must run the steps, not hand over a script to run by hand."""
-    assert "--status" in LOGIN_SKILL_TEXT
-    assert "--qr" in LOGIN_SKILL_TEXT
-    assert "auth-status.json" in LOGIN_SKILL_TEXT
-    assert "Drive this yourself" in LOGIN_SKILL_TEXT
+    """It checks, hands over one command, waits for it and confirms."""
+    for step in ("--status", "--wait", "auth-status.json", "```bash", "Drive this yourself"):
+        assert step in LOGIN_SKILL_TEXT, step
+
+
+def test_the_login_skill_offers_no_link_and_no_detached_mode():
+    """A tg:// link opens only inside a Telegram app, so in chat on the same machine it is
+    useless; the detached --qr mode that produced it is gone."""
+    assert "--qr" not in LOGIN_SKILL_TEXT
+    assert "tg://" not in LOGIN_SKILL_TEXT
+    assert "nohup" not in LOGIN_SKILL_TEXT
+
+
+def test_the_login_skill_warns_about_the_sandbox_up_front():
+    assert LOGIN_SKILL_TEXT.index("andbox") < LOGIN_SKILL_TEXT.index("## 1.")
+
+
+def test_the_login_skill_hands_over_a_path_the_operators_shell_can_run():
+    lowered = LOGIN_SKILL_TEXT.lower()
+    assert "absolute path" in lowered
+    assert "does not have that variable" in lowered
 
 
 def test_the_login_skill_refuses_to_collect_secrets_in_conversation():
@@ -64,10 +80,10 @@ def test_the_login_skill_refuses_to_collect_secrets_in_conversation():
     assert "must not travel through a tool call" in lowered
 
 
-def test_the_login_skill_covers_every_status_the_cli_can_report():
-    from telegram_plugin.login import DEFAULT_QR_TIMEOUT  # noqa: F401
+def test_the_login_skill_covers_every_outcome_the_cli_can_report():
+    from telegram_plugin.login import FINAL_STATES
 
-    for state in ("credentials", "authorized", "session_in_use", "expired", "needs_password"):
+    for state in ("credentials", "authorized", "session_in_use", "timeout", *FINAL_STATES):
         assert state in LOGIN_SKILL_TEXT, state
 
 

@@ -11,14 +11,11 @@ SOURCE = (REPO / "src/telegram_plugin/login.py").read_text()
 
 
 def _run(args, state_dir, **extra):
-    environment = {
-        **os.environ,
-        "TELEGRAM_STATE_DIR": str(state_dir),
-        "PYTHONPATH": str(REPO / "src"),
-        **extra,
-    }
+    environment = {**os.environ, "TELEGRAM_STATE_DIR": str(state_dir),
+                   "PYTHONPATH": str(REPO / "src")}
     for leaked in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH"):
         environment.pop(leaked, None)
+    environment.update(extra)
     return subprocess.run(
         [sys.executable, "-m", "telegram_plugin.login", *args],
         capture_output=True,
@@ -26,6 +23,7 @@ def _run(args, state_dir, **extra):
         env=environment,
         timeout=120,
         check=False,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -42,7 +40,7 @@ def test_help_offers_only_the_state_directory(tmp_path):
 
 
 def test_the_two_factor_password_is_read_without_echo():
-    assert "getpass.getpass" in SOURCE
+    assert "getpass.getpass" in (REPO / "src/telegram_plugin/terminal.py").read_text()
 
 
 def test_missing_credentials_are_explained_rather_than_traced(tmp_path):
@@ -122,9 +120,9 @@ def _status_file(state_dir):
 
 
 def test_missing_credentials_reach_the_status_file_not_only_stderr(tmp_path):
-    """The /telegram:login skill runs --qr detached with output discarded and polls only
-    this file; a failure that never got here left the agent reading a stale one for ever."""
-    result = _run(["--qr"], tmp_path)
+    """An agent waiting on the login reads only this file; a failure that never got here
+    left it reading a stale one for ever."""
+    result = _run([], tmp_path)
     assert result.returncode == 2
     payload = _status_file(tmp_path)
     assert payload["state"] == "failed"
@@ -140,7 +138,7 @@ def test_a_held_session_reaches_the_status_file_too(tmp_path):
     try:
         assert ready.wait(10)
         # No wait: the point here is the refusal reaching the file, not the waiting.
-        assert _run(["--qr"], tmp_path, TELEGRAM_LOCK_WAIT="0").returncode == 1
+        assert _run([], tmp_path, TELEGRAM_LOCK_WAIT="0").returncode == 1
         payload = _status_file(tmp_path)
         assert payload["state"] == "failed"
         assert "another process" in payload["hint"].lower()
@@ -152,5 +150,15 @@ def test_a_held_session_reaches_the_status_file_too(tmp_path):
 def test_a_stale_outcome_is_cleared_before_anyone_polls(tmp_path):
     """An `authorized` left by an earlier run would be read as this run succeeding."""
     (tmp_path / "auth-status.json").write_text(json.dumps({"state": "authorized"}))
-    _run(["--qr"], tmp_path)
+    _run([], tmp_path)
     assert _status_file(tmp_path)["state"] != "authorized"
+
+
+def test_without_a_terminal_it_says_so_instead_of_hanging_or_failing_silently(tmp_path):
+    """An agent running it through its own tool has no terminal to show a code in."""
+    result = _run([], tmp_path, TELEGRAM_API_ID="1", TELEGRAM_API_HASH="h")
+    assert result.returncode == 1
+    assert "needs a terminal" in result.stderr
+    payload = _status_file(tmp_path)
+    assert payload["state"] == "failed"
+    assert "needs a terminal" in payload["hint"]

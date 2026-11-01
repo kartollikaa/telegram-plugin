@@ -3,8 +3,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-# Transport entry points own their streams; every shared module remains stream-free.
-STREAM_EXEMPT = {"login.py", "cli.py"}
+# Transport entry points own their streams, and so does the login's terminal; every
+# shared module remains stream-free.
+STREAM_EXEMPT = {"login.py", "cli.py", "terminal.py"}
 
 
 def _shared_modules():
@@ -49,4 +50,4 @@ def test_the_exemptions_are_the_ones_we_think_they_are():
 
 
 def test_the_login_cli_keeps_its_secret_prompt_off_the_screen():
-    assert "getpass.getpass" in (REPO / "src/telegram_plugin/login.py").read_text()
+    assert "getpass.getpass" in (REPO / "src/telegram_plugin/terminal.py").read_text()

@@ -4,7 +4,9 @@ set -e
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
-DEPS="telethon>=1.42,<2"
+DEPS="telethon>=1.42,<2 segno>=1.6,<2"
+# Quoted for the hints: pasted bare, the < in a specifier is a shell redirect.
+QUOTED_DEPS="'telethon>=1.42,<2' 'segno>=1.6,<2'"
 
 mkdir -p "$STATE"
 chmod 700 "$STATE"
@@ -31,7 +33,7 @@ WANTED=$(digest "$DEPS|$VERSION")
 # the version here is what makes that hold for TELEGRAM_PLUGIN_PYTHON too.
 MIN_TELETHON="1.42"
 has_dependencies() {
-    "$1" -c 'import re, sys, telethon; m = re.match(r"(\d+)\.(\d+)", telethon.__version__); sys.exit(0 if m and (int(m.group(1)), int(m.group(2))) >= (1, 42) else 1)' >/dev/null 2>&1 3>&-
+    "$1" -c 'import re, sys, segno, telethon; m = re.match(r"(\d+)\.(\d+)", telethon.__version__); sys.exit(0 if m and (int(m.group(1)), int(m.group(2))) >= (1, 42) else 1)' >/dev/null 2>&1 3>&-
 }
 
 refuse_to_delete_a_non_venv() {
@@ -74,10 +76,10 @@ install_into() {
 if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
     PYTHON=$TELEGRAM_PLUGIN_PYTHON
     if ! has_dependencies "$PYTHON"; then
-        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon," >&2
+        echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON=$PYTHON cannot import telethon or segno," >&2
         echo "[telegram-plugin] or its telethon is older than $MIN_TELETHON." >&2
         echo "[telegram-plugin] Install them there:" >&2
-        echo "[telegram-plugin]   $PYTHON -m pip install $DEPS" >&2
+        echo "[telegram-plugin]   $PYTHON -m pip install $QUOTED_DEPS" >&2
         echo "[telegram-plugin] or unset the variable and let the plugin build its own." >&2
         exit 1
     fi
@@ -97,7 +99,7 @@ else
                 echo "[telegram-plugin] cannot create a virtualenv: python3 -m venv failed." >&2
                 echo "[telegram-plugin] On Debian/Ubuntu install python3-venv, or point" >&2
                 echo "[telegram-plugin] TELEGRAM_PLUGIN_PYTHON at an interpreter that has:" >&2
-                echo "[telegram-plugin]   $DEPS" >&2
+                echo "[telegram-plugin]   $QUOTED_DEPS" >&2
                 exit 1
             fi
             install_into "$STAGE/bin/python"

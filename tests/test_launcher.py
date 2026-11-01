@@ -184,3 +184,85 @@ def test_a_wiped_site_packages_is_reinstalled_despite_a_matching_stamp(own_state
     assert "installing dependencies" in again.stderr.lower()
     assert again.returncode == 0
     assert again.stdout.startswith("usage: telegram")
+
+
+LOGIN_LAUNCHER = REPO / "bin" / "telegram-login"
+
+
+def _python_without_segno(tmp_path: Path) -> Path:
+    """An interpreter that has Telethon but not the QR library: a runtime built before
+    the login started drawing codes."""
+    import sys
+
+    blocker = tmp_path / "blocker"
+    blocker.mkdir()
+    (blocker / "segno.py").write_text("raise ImportError('segno is not installed here')\n")
+    wrapper = tmp_path / "python-without-segno"
+    wrapper.write_text(
+        f'#!/bin/sh\nPYTHONPATH="{blocker}${{PYTHONPATH:+:$PYTHONPATH}}" '
+        f'exec "{sys.executable}" "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    return wrapper
+
+
+def _run_login(state_dir: Path, python: Path, *arguments: str) -> subprocess.CompletedProcess:
+    environment = {**os.environ, "TELEGRAM_STATE_DIR": str(state_dir),
+                   "TELEGRAM_PLUGIN_PYTHON": str(python)}
+    return subprocess.run(
+        [str(LOGIN_LAUNCHER), *arguments],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=120,
+        check=False,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+def test_the_login_checks_the_runtime_and_reports_a_missing_piece(tmp_path):
+    import json
+
+    state = tmp_path / "state"
+    result = _run_login(state, _python_without_segno(tmp_path))
+    assert result.returncode == 1
+    assert "cannot import telethon or segno" in result.stderr
+    assert "could not be installed" in result.stderr
+    payload = json.loads((state / "auth-status.json").read_text())
+    assert payload["state"] == "failed"
+    assert "written" in payload
+
+
+def test_status_and_wait_skip_the_runtime_check_so_they_answer_in_a_sandbox(tmp_path):
+    """bin/telegram chmods the state directory, which a sandbox refuses; the reading
+    modes must not go through it."""
+    import json
+
+    state = tmp_path / "state"
+    python = _python_without_segno(tmp_path)
+    status = _run_login(state, python, "--status")
+    assert status.returncode == 0, status.stderr
+    assert json.loads(status.stdout)["authorized"] is False
+    waited = _run_login(state, python, "--wait", "--timeout", "0")
+    assert waited.returncode == 3, waited.stderr
+    assert not state.exists(), "a reading mode created the state directory"
+
+
+def test_a_runtime_from_before_the_qr_library_is_upgraded_by_the_login(own_state):
+    """Existing installs: the stamp no longer matches and segno is absent, and the login
+    is what the operator runs first."""
+    site = next((own_state / "venv" / "lib").glob("python*")) / "site-packages"
+    for path in site.glob("segno*"):
+        subprocess.run(["rm", "-rf", str(path)], check=True)
+    (own_state / "venv" / ".deps-stamp").write_text("stamp-of-1.0.0")
+    environment = {**os.environ, "TELEGRAM_STATE_DIR": str(own_state)}
+    environment.pop("TELEGRAM_PLUGIN_PYTHON", None)
+    result = subprocess.run(
+        [str(LOGIN_LAUNCHER), "--help"],
+        capture_output=True, text=True, env=environment, timeout=600, check=False,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "installing dependencies" in result.stderr.lower()
+    assert result.stdout.startswith("usage: telegram-login")
+    python = own_state / "venv" / "bin" / "python"
+    assert subprocess.run([str(python), "-c", "import segno"], check=False).returncode == 0

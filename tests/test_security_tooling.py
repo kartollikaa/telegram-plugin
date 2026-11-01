@@ -144,7 +144,11 @@ ALLOWED_RAW_REQUESTS = frozenset({"CheckChatInviteRequest"})
 # The login program runs out of process, in front of a human, and is the only
 # place allowed to authenticate. Keeping its surface separate is the point: these
 # appearing in the gateway would mean an agent-reachable login.
-ALLOWED_LOGIN_ONLY_CALLS = frozenset({"start", "qr_login", "sign_in", "log_out"})
+ALLOWED_LOGIN_ONLY_CALLS = frozenset(
+    {"start", "qr_login", "send_code_request", "sign_in", "log_out"}
+)
+# Not a call: the login reads Telethon's measured clock offset to time QR tokens.
+ALLOWED_LOGIN_READS = frozenset({"client.<dynamic> ('_sender')"})
 
 
 def _tracked_files() -> list[str]:
@@ -397,7 +401,7 @@ def test_the_gateway_cannot_authenticate():
 
 def test_the_login_program_stays_within_its_own_surface():
     methods, _ = _telethon_calls("src/telegram_plugin/login.py")
-    allowed = ALLOWED_GATEWAY_CALLS | ALLOWED_LOGIN_ONLY_CALLS
+    allowed = ALLOWED_GATEWAY_CALLS | ALLOWED_LOGIN_ONLY_CALLS | ALLOWED_LOGIN_READS
     assert methods <= allowed, f"unapproved login calls: {sorted(methods - allowed)}"
 
 

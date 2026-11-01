@@ -202,24 +202,57 @@ still share one account:
 Resolved chats are cached for the life of a connection, which removes a round
 trip per call, and the cache dies with the client because entities belong to it.
 
-`bin/telegram-login` is a separate program with three ways in, none of which
-lets a secret through a tool call:
+`bin/telegram-login` is a separate program, run by a human in a terminal. An
+agent never runs the login itself: it hands the operator the one command, and in bb
+chat that command block gets a Run button that opens a real terminal under it.
 
+- No flags: the login. A QR code is drawn as half-block text that fits an 80×24
+  terminal, black on white whatever the terminal theme, on the terminal's alternate screen, so redrawing
+  never scrolls and quitting leaves the scrollback as it was. `p` switches to phone
+  number and login code; a two-step password is asked in the same session with the
+  account's hint, and a wrong one is asked again. The login code is
+  hidden too: bb's inline terminal reports its output back to the agent.
 - `--status` reports whether the session is usable and under whom, and changes
   nothing. Asked while another command holds the session, it says so instead of
-  failing — a held lock is itself the answer that a session exists.
-- `--qr` publishes a `tg://login` link, waits for a client already signed in to
-  confirm it, and writes the session. Nothing is typed, which is what lets the
-  bundled `/telegram:login` skill drive a login to completion without asking
-  anyone to run a script. The link and the outcome go to `auth-status.json` in
-  the state directory (mode `0600`) **before** the wait begins, because
-  Telethon's `wait()` only resolves while it is running — whoever is driving
-  needs the link in hand while the process sits there. An unconfirmed token is
-  re-requested only once it has actually expired; re-issuing a live one costs an
-  API call on a login endpoint for nothing.
-- no flags: the classic phone, code and 2FA prompts, for a human at a terminal.
-  This is the fallback the QR path names when an account has a second factor,
-  which a link alone cannot satisfy.
+  failing — a held lock is itself the answer that a session exists. It never tightens
+  the state directory, and where the lock file cannot be created (an agent's sandbox) it answers
+  `"authorized": "unknown"` with the reason rather than a traceback.
+- `--wait` blocks until a login running elsewhere reports an outcome, which is how
+  the skill learns that the operator is done.
+
+**Token rotation.** Telegram's login tokens are short-lived, and `ExportLoginToken`
+hands back the *same* token until it has expired — seen on a live run, where a request
+a few seconds early returned the old code. So the next token is asked for just after
+expiry, never before, using Telethon's measure of how far this clock is off; if the old one comes back anyway
+(this clock runs ahead of Telegram's), the request is retried with backoff and the
+screen is not redrawn. A floor on screen time keeps a skewed clock from turning that
+into a request storm. A single `QRLogin.wait()` spans every rotation: its update
+handler stays registered throughout, so a scan that lands while the next token is
+being fetched is still caught, and a scan already being confirmed when the time limit
+runs out is allowed to land. The 1.0 flow waited a fixed timeout per token, longer than
+the token lived, so the code on screen was dead for much of every attempt.
+
+**Every way out leaves an outcome.** `auth-status.json` in the state directory (mode
+`0600`) carries the step in progress (`qr`, `phone`, `code`, `password`) and then one
+final state: `authorized`, `cancelled`, `failed` or `expired`, with a hint. Every
+write is stamped with the time and the writer's pid. Ctrl-C, a closed terminal and a
+kill are turned into `cancelled` by the login's own signal handlers — asyncio's
+default Ctrl-C handler only schedules a cancel, which a blocking prompt never sees. A
+runtime that cannot be installed is reported by the shell launcher itself. `--wait`
+counts only an outcome written after it started or by a login it saw running, so
+yesterday's `authorized` does not read as today's. A login whose process died without
+writing anything is reported as abandoned rather than waited on for ever; "running" is
+read from the session lock the login holds, because a sandbox with its own pid
+namespace cannot see the login's pid. The
+file never holds a login link.
+
+**Why the detached `--qr` mode is gone.** It existed so an agent could drive a login
+with no terminal: it published a `tg://login` link and waited. In practice the link
+opens only inside a Telegram app, so it is useless in a chat on the same machine; a
+QR image of it posted to chat goes stale within seconds; and it could not finish a
+two-step login, which sent the operator to a terminal anyway. Every host this plugin
+runs on gives the operator a terminal, and the terminal flow covers every case, so
+there is no use left for it. `--qr` now exits with a pointer to the command.
 
 Secrets are read from a prompt, never from a command-line argument, where they
 would land in shell history and in the process table. The lock is taken before
@@ -341,7 +374,9 @@ The constraints are part of the contract, not advice:
 
 ## Dependencies
 
-One runtime dependency, floored and capped: `telethon>=1.42,<2`. The floor is not
+Two runtime dependencies, each floored and capped. `segno>=1.6,<2` draws the
+login's QR code: pure Python, no dependencies of its own, and imported only by the
+login. `telethon>=1.42,<2` is the other, and its floor is not
 cosmetic — before 1.42 Telethon honoured an absolute path in a *sender-supplied*
 file name, so a download could be steered out of its directory by the person who
 sent the file. The cap keeps a major rewrite from arriving silently.
@@ -438,6 +473,12 @@ worth testing are ordinary functions:
 - the launcher itself, run as a subprocess against a fresh state directory, both
   for the installing run and the one after it;
 - the unauthorised path, against a stand-in client rather than a mocked Telethon;
+- the login's state machine against a double of `QRLogin` that behaves like the
+  server — the same token until expiry — including token rotation timing, clock
+  skew, the phone and two-step paths, and an outcome on every exit;
+- the login's terminal on a real pseudo-terminal: keys, hidden prompts, Ctrl-C at
+  the code and at a prompt, a closed terminal, and the tty handed back as found;
+- the QR drawing decoded back into modules, so what is shown is exactly the code;
 - the disabled-send path, asserting the gateway was never reached.
 
 Telethon itself is not mocked wholesale — the live path is verified by hand

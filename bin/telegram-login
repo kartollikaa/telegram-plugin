@@ -1,18 +1,38 @@
 #!/bin/sh
-# Interactive login. Talks to a human, so stdout stays as it is.
+# The login. Talks to a human, so stdout stays as it is.
 set -e
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
 VENV="$STATE/venv"
 
+# The login goes through bin/telegram's installer, so an older runtime gets new
+# dependencies; --status and --wait only read, and must answer inside a sandbox.
+needs_runtime=1
+for argument in "$@"; do
+    case $argument in
+        --status | --wait) needs_runtime=0 ;;
+    esac
+done
+if [ -z "${TELEGRAM_PLUGIN_PYTHON:-}" ] && [ ! -x "$VENV/bin/python" ]; then
+    needs_runtime=1
+fi
+if [ "$needs_runtime" = 1 ] && ! "$ROOT/bin/telegram" --help >/dev/null; then
+    # An agent waiting on the status file must see this failure too.
+    HINT="the plugin runtime could not be installed; the reason is in the terminal above"
+    STATUS="$STATE/auth-status.json"
+    {
+        printf '{"state": "failed", "hint": "%s", "pid": %s, "written": "%s"}\n' \
+            "$HINT" "$$" "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >"$STATUS" &&
+            chmod 600 "$STATUS"
+    } 2>/dev/null || true
+    echo "✗ The plugin runtime could not be installed (see above). Nothing was logged in." >&2
+    exit 1
+fi
+
 if [ -n "${TELEGRAM_PLUGIN_PYTHON:-}" ]; then
     PYTHON=$TELEGRAM_PLUGIN_PYTHON
-elif [ -x "$VENV/bin/python" ]; then
-    PYTHON="$VENV/bin/python"
 else
-    echo "Dependencies are not installed yet. Run scripts/setup.sh first," >&2
-    echo "or start the plugin once so it can install them." >&2
-    exit 1
+    PYTHON="$VENV/bin/python"
 fi
 
 PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
