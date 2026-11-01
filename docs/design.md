@@ -206,30 +206,31 @@ trip per call, and the cache dies with the client because entities belong to it.
 agent never runs the login itself: it hands the operator the one command, and in bb
 chat that command block gets a Run button that opens a real terminal under it.
 
-- No flags: the login. A QR code is drawn as half-block text (37×19 cells, black on
-  white whatever the terminal theme) on the terminal's alternate screen, so redrawing
+- No flags: the login. A QR code is drawn as half-block text that fits an 80×24
+  terminal, black on white whatever the terminal theme, on the terminal's alternate screen, so redrawing
   never scrolls and quitting leaves the scrollback as it was. `p` switches to phone
   number and login code; a two-step password is asked in the same session with the
-  account's hint, and a wrong one is asked again up to three times. The login code is
+  account's hint, and a wrong one is asked again. The login code is
   hidden too: bb's inline terminal reports its output back to the agent.
 - `--status` reports whether the session is usable and under whom, and changes
   nothing. Asked while another command holds the session, it says so instead of
-  failing — a held lock is itself the answer that a session exists. It never chmods
-  anything, and where the lock file cannot be created (an agent's sandbox) it answers
+  failing — a held lock is itself the answer that a session exists. It never tightens
+  the state directory, and where the lock file cannot be created (an agent's sandbox) it answers
   `"authorized": "unknown"` with the reason rather than a traceback.
 - `--wait` blocks until a login running elsewhere reports an outcome, which is how
   the skill learns that the operator is done.
 
-**Token rotation.** Telegram's login tokens live about 30 seconds, and
-`ExportLoginToken` hands back the *same* token until it has expired — seen on a live
-run, where a request five seconds early returned the old code. So the next token is
-asked for half a second after expiry, never before; if the old one comes back anyway
+**Token rotation.** Telegram's login tokens are short-lived, and `ExportLoginToken`
+hands back the *same* token until it has expired — seen on a live run, where a request
+a few seconds early returned the old code. So the next token is asked for just after
+expiry, never before, using Telethon's measure of how far this clock is off; if the old one comes back anyway
 (this clock runs ahead of Telegram's), the request is retried with backoff and the
 screen is not redrawn. A floor on screen time keeps a skewed clock from turning that
 into a request storm. A single `QRLogin.wait()` spans every rotation: its update
 handler stays registered throughout, so a scan that lands while the next token is
-being fetched is still caught. The 1.0 flow waited a fixed 60 seconds per token, so
-the code on screen was dead for half of every attempt.
+being fetched is still caught, and a scan already being confirmed when the time limit
+runs out is allowed to land. The 1.0 flow waited a fixed timeout per token, longer than
+the token lived, so the code on screen was dead for much of every attempt.
 
 **Every way out leaves an outcome.** `auth-status.json` in the state directory (mode
 `0600`) carries the step in progress (`qr`, `phone`, `code`, `password`) and then one
@@ -239,8 +240,10 @@ kill are turned into `cancelled` by the login's own signal handlers — asyncio'
 default Ctrl-C handler only schedules a cancel, which a blocking prompt never sees. A
 runtime that cannot be installed is reported by the shell launcher itself. `--wait`
 counts only an outcome written after it started or by a login it saw running, so
-yesterday's `authorized` does not read as today's, and a login whose process died
-without writing anything is reported as abandoned rather than waited on for ever. The
+yesterday's `authorized` does not read as today's. A login whose process died without
+writing anything is reported as abandoned rather than waited on for ever; "running" is
+read from the session lock the login holds, because a sandbox with its own pid
+namespace cannot see the login's pid. The
 file never holds a login link.
 
 **Why the detached `--qr` mode is gone.** It existed so an agent could drive a login

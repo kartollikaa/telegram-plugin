@@ -116,8 +116,8 @@ for that terminal to finish and confirms which account is connected.
 The login itself is one interactive program, `bin/telegram-login`:
 
 1. It draws a QR code in the terminal. Scan it from Telegram on your phone:
-   **Settings → Devices → Link Desktop Device**. Telegram's login tokens live about
-   30 seconds; the code is redrawn in place as each one expires, with a countdown.
+   **Settings → Devices → Link Desktop Device**. Telegram's login tokens are
+   short-lived; the code is redrawn in place as each one expires, with a countdown.
 2. Or press `p` and log in with your phone number and the code Telegram sends you.
 3. If the account has two-step verification, the password is asked in the same
    terminal, with hidden input and your password hint. A wrong one is asked again.

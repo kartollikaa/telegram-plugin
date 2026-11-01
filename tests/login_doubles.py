@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from telethon.errors import (
+    FloodWaitError,
     PasswordHashInvalidError,
     PhoneCodeExpiredError,
     PhoneCodeInvalidError,
@@ -97,6 +98,8 @@ class StubClient:
         invalid_phones=(),
         hint=None,
         connect_error=None,
+        flood_on_send=None,
+        time_offset=None,
     ):
         self.qr = qr or StubQr()
         self._authorized = authorized
@@ -105,6 +108,10 @@ class StubClient:
         self.invalid_phones = set(invalid_phones)
         self.hint = hint
         self.connect_error = connect_error
+        self.flood_on_send = flood_on_send
+        """The send_code_request call, counted from 1, that Telegram answers with a flood wait."""
+        if time_offset is not None:
+            self._sender = SimpleNamespace(_state=SimpleNamespace(time_offset=time_offset))
         self.sent: list[str] = []
         self.signed_in_with: list[str] = []
         self.disconnected = False
@@ -122,6 +129,8 @@ class StubClient:
 
     async def send_code_request(self, phone):
         self.sent.append(phone)
+        if self.flood_on_send == len(self.sent):
+            raise FloodWaitError(request=None, capture=42)
         if phone in self.invalid_phones:
             raise PhoneNumberInvalidError(request=None)
         return SimpleNamespace(type=SentCodeTypeApp(length=5))

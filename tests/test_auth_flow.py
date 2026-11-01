@@ -25,7 +25,7 @@ from tests.login_doubles import ScriptedUi, StubClient, StubQr
 
 # Seconds shrunk so a rotation takes a fraction of a second; the ratios stay realistic.
 FAST = Pace(rotate_after=0.05, retry=0.05, max_retry=0.2, min_show=0.05, max_show=5.0,
-            limit=5.0, tick=0.01)
+            limit=5.0, grace=0.05, tick=0.01)
 
 
 def _config(tmp_path, **extra):
@@ -122,7 +122,8 @@ async def test_a_code_accepted_between_tokens_still_finishes(tmp_path):
 async def test_an_unscanned_code_gives_up_at_the_limit(tmp_path):
     config = _config(tmp_path)
     qr = StubQr(lifetime=0.3)
-    pace = Pace(rotate_after=0.05, min_show=0.05, max_show=5.0, limit=0.5, tick=0.01)
+    pace = Pace(rotate_after=0.05, min_show=0.05, max_show=5.0, limit=0.5, grace=0.05,
+                tick=0.01)
     result = await interactive_login(config, StubClient(qr), ScriptedUi(), pace)
     assert result["state"] == "expired"
     assert "telegram-login" in result["hint"]
@@ -296,7 +297,8 @@ def test_every_exit_writes_its_outcome_and_says_it(
 
 
 def test_an_unscanned_code_exits_expired(tmp_path, credentials, capsys):
-    pace = Pace(rotate_after=0.05, min_show=0.05, max_show=5.0, limit=0.3, tick=0.01)
+    pace = Pace(rotate_after=0.05, min_show=0.05, max_show=5.0, limit=0.3, grace=0.05,
+                tick=0.01)
     code = main(["--state-dir", str(tmp_path)], client_factory=lambda _: StubClient(StubQr()),
                 ui=ScriptedUi(), pace=pace)
     assert code == 1
@@ -337,12 +339,59 @@ def test_wait_ignores_an_outcome_left_by_an_earlier_run(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["state"] == "timeout"
 
 
+def _login_holding_the_session(config, outcome, *, pid=None, hold=0.3, after=None):
+    """A login as --wait sees it: the session lock held while it runs, the outcome
+    written as it lets go. Runs in a thread of this process; with `after`, it starts
+    that many seconds later instead of before this returns."""
+    from telegram_plugin.client import session_lock
+
+    started = threading.Event()
+
+    def run():
+        if after is not None:
+            time.sleep(after)
+        with session_lock(config.session_path):
+            payload = {"state": "waiting", "step": "qr"}
+            write_status(config, payload)
+            if pid is not None:
+                _rewrite_pid(config, pid)
+            started.set()
+            time.sleep(hold)
+        time.sleep(0.05)  # a failing login writes its outcome after releasing the lock
+        write_status(config, outcome)
+
+    threading.Thread(target=run, daemon=True).start()
+    if after is None:
+        assert started.wait(5)
+
+
+def _rewrite_pid(config, pid):
+    payload = json.loads(config.auth_status_path.read_text())
+    payload["pid"] = pid
+    config.auth_status_path.write_text(json.dumps(payload))
+
+
 def test_wait_follows_a_login_already_running_when_it_started(tmp_path, capsys):
     config = _config(tmp_path)
-    write_status(config, {"state": "waiting", "step": "qr"})  # this process: alive
-    _write_later(config, {"state": "failed", "hint": "x"}, 0.2)
-    assert login._wait_command(config, 5, poll=0.02) == 1
+    _login_holding_the_session(config, {"state": "failed", "hint": "x"})
+    assert login._wait_command(config, 5, poll=0.02, settle=0.2) == 1
     assert json.loads(capsys.readouterr().out)["state"] == "failed"
+
+
+def test_wait_trusts_the_session_lock_over_a_pid_it_cannot_see(tmp_path, capsys):
+    """In a sandbox with its own pid namespace the login's pid looks dead while it runs."""
+    config = _config(tmp_path)
+    _login_holding_the_session(config, {"state": "authorized", "account": {"id": 42}},
+                               pid=2**22 + 12345, after=0.1)
+    assert login._wait_command(config, 5, poll=0.02, settle=0.2) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "authorized"
+
+
+def test_wait_does_not_call_abandoned_the_moment_between_unlock_and_outcome(tmp_path, capsys):
+    config = _config(tmp_path)
+    _login_holding_the_session(config, {"state": "cancelled", "hint": "x"}, hold=0.05)
+    assert login._wait_command(config, 5, poll=0.01, settle=0.2) == 1
+    assert json.loads(capsys.readouterr().out)["state"] == "cancelled"
 
 
 def test_wait_notices_a_login_that_died_without_a_word(tmp_path, capsys):
@@ -356,7 +405,7 @@ def test_wait_notices_a_login_that_died_without_a_word(tmp_path, capsys):
         config.auth_status_path.write_text(json.dumps(payload))
 
     threading.Thread(target=die_silently, daemon=True).start()
-    assert login._wait_command(config, 5, poll=0.02) == 1
+    assert login._wait_command(config, 5, poll=0.02, settle=0.2) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["abandoned"] is True
     assert "terminal" in payload["hint"]
@@ -530,3 +579,74 @@ def test_the_double_exposes_what_telethon_exposes_on_a_login_token():
     for name in ("url", "expires"):
         assert isinstance(getattr(QRLogin, name), property), name
         assert isinstance(getattr(StubQr, name), property), name
+
+
+# --- review findings -----------------------------------------------------------------
+
+
+async def test_a_scan_being_confirmed_at_the_limit_is_allowed_to_land(tmp_path):
+    qr = StubQr(lifetime=5.0, scan_after=0.4)
+    pace = Pace(rotate_after=0.05, min_show=0.05, max_show=5.0, limit=0.3, grace=1.0, tick=0.01)
+    result = await interactive_login(_config(tmp_path), StubClient(qr), ScriptedUi(), pace)
+    assert result["state"] == "authorized"
+
+
+async def test_p_after_a_confirmed_scan_does_not_abandon_it(tmp_path):
+    qr = StubQr(lifetime=0.2, scan_after=0.5, consumed_on_recreate=1)
+    ui = ScriptedUi(keys=[(0.35, "p")])
+    result = await interactive_login(_config(tmp_path), StubClient(qr), ui, FAST)
+    assert result["state"] == "authorized"
+    assert not any(event[0] == "ask" for event in ui.events)
+
+
+async def test_the_p_key_on_a_russian_layout_switches_too(tmp_path):
+    ui = ScriptedUi(answers=["+447700900123"], secrets=["12345"], keys=[(0.0, "з")])
+    client = StubClient(StubQr())
+    await interactive_login(_config(tmp_path), client, ui, FAST)
+    assert client.sent == ["447700900123"]
+
+
+async def test_a_flood_wait_on_resending_an_expired_code_is_reported_as_such(tmp_path):
+    client = StubClient(StubQr(), codes=["expired"], flood_on_send=2)
+    ui = ScriptedUi(answers=["+447700900123"], secrets=["11111"], keys=[(0.0, "p")])
+    with pytest.raises(LoginFailed, match="wait 42 s"):
+        await interactive_login(_config(tmp_path), client, ui, FAST)
+
+
+async def test_telegrams_clock_offset_is_used_for_the_schedule(tmp_path):
+    """Telethon measures how far our clock is off; with it, no token is asked for early."""
+    qr = StubQr(lifetime=0.4, scan_after=1.3, server_offset=-0.3)
+    await interactive_login(_config(tmp_path), StubClient(qr, time_offset=-0.3), ScriptedUi(),
+                            FAST)
+    assert len(qr.recreations) == qr.tokens - 1, qr.recreations
+
+
+def test_status_reports_a_session_database_it_cannot_open(tmp_path, monkeypatch, capsys):
+    import sqlite3
+
+    (tmp_path / ".env").write_text("TELEGRAM_API_ID=1\nTELEGRAM_API_HASH=h\n")
+    (tmp_path / "telegram.session").write_bytes(b"")
+
+    async def unreadable(config):
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    monkeypatch.setattr(login, "_report_status", unreadable)
+    assert main(["--status", "--state-dir", str(tmp_path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["authorized"] == "unknown"
+    assert "readonly database" in payload["hint"]
+
+
+def test_wait_counts_a_launcher_failure_stamped_in_the_same_second(tmp_path, capsys):
+    """The shell launcher can only stamp to the second."""
+    config = _config(tmp_path)
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+
+    def shell_failure():
+        time.sleep(0.1)
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        config.auth_status_path.write_text(json.dumps(
+            {"state": "failed", "hint": "runtime", "pid": 1, "written": now.isoformat()}))
+
+    threading.Thread(target=shell_failure, daemon=True).start()
+    assert login._wait_command(config, 2, poll=0.02) == 1

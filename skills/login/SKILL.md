@@ -70,9 +70,9 @@ Right after posting the block, wait for the login to finish:
 "${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --wait
 ```
 
-It reads `auth-status.json` in the state directory and returns within 8 minutes. On Claude
-Code give the call a 600000 ms timeout, or run it in the background. It only reads, so it works
-inside the sandbox. It prints the outcome:
+It reads `auth-status.json` in the state directory and gives up on its own before a
+10-minute tool limit; on Claude Code give the call the maximum timeout, or run it in the
+background. It only reads, so it works inside the sandbox. It prints the outcome:
 
 - `authorized` → run `--status` and report the account name and id from it.
 - `cancelled`, `failed` or `expired` → relay the `hint` in one line and offer the same command

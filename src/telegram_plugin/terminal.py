@@ -11,21 +11,25 @@ import termios
 import tty
 from typing import TextIO
 
-from telegram_plugin.qr import render
+from telegram_plugin.qr import DARK_ON_LIGHT, RESET, render
 
 ALTERNATE_SCREEN = "\x1b[?1049h"
 MAIN_SCREEN = "\x1b[?1049l"
 HIDE_CURSOR = "\x1b[?25l"
 SHOW_CURSOR = "\x1b[?25h"
 CLEAR_SCREEN = "\x1b[H\x1b[2J"
-CLEAR_LINE = "\x1b[2K"
+CLEAR_TO_END = "\x1b[J"
 
 HEADER = "Log in to Telegram: on your phone open Settings → Devices → Link Desktop Device"
-FOOTER = "New code in {seconds:>2}s  ·  p  use phone number instead  ·  Ctrl-C  cancel"
+FOOTER = "New code in {seconds:>2}s  ·  p  phone number instead  ·  Ctrl-C  cancel"
 
 
 def is_interactive(stdin: TextIO, stdout: TextIO) -> bool:
     return stdin.isatty() and stdout.isatty()
+
+
+def _rows(line: str, columns: int) -> int:
+    return max(1, -(-len(line) // max(columns, 1)))
 
 
 class Terminal:
@@ -55,18 +59,19 @@ class Terminal:
         self._write(ALTERNATE_SCREEN + HIDE_CURSOR)
 
     def show_qr(self, url: str, seconds: int) -> None:
-        code = render(url)
-        width = len(render(url, color=False)[0])
-        frame = [HEADER, ""]
+        plain = render(url, color=False)
+        width = len(plain[0])
         columns, rows = shutil.get_terminal_size()
-        needed_rows = len(code) + 4
+        frame = [HEADER, ""]
+        needed_rows = len(plain) + 4
         if columns < width or rows < needed_rows:
             frame.append(
                 f"The window is {columns}x{rows}; the code needs {width}x{needed_rows}. "
                 "Enlarge it, or press p."
             )
-        frame += [*code, ""]
-        self._footer_row = len(frame) + 1
+        # Text lines wrap in a narrow window; the footer row has to count that.
+        self._footer_row = sum(_rows(line, columns) for line in frame) + len(plain) + 2
+        frame += [f"{DARK_ON_LIGHT}{line}{RESET}" for line in plain] + [""]
         self._write(CLEAR_SCREEN + "\n".join(frame) + "\n" + FOOTER.format(seconds=seconds))
 
     def countdown(self, seconds: int) -> None:
@@ -75,22 +80,25 @@ class Terminal:
     def notice(self, text: str) -> None:
         if self._footer_row is None:
             return
-        self._write(f"\x1b[{self._footer_row};1H{CLEAR_LINE}{text}")
+        self._write(f"\x1b[{self._footer_row};1H{CLEAR_TO_END}{text}")
 
     def poll_key(self) -> str | None:
         fd = self._in.fileno()
         ready, _, _ = select.select([fd], [], [], 0)
         if not ready:
             return None
-        return os.read(fd, 1).decode("utf-8", "ignore") or None
+        # Everything waiting at once: a key on a non-Latin layout is several bytes.
+        return os.read(fd, 64).decode("utf-8", "ignore") or None
 
     def leave_qr(self) -> None:
         if self._saved_mode is None:
             return
         self._write(SHOW_CURSOR + MAIN_SCREEN)
-        termios.tcsetattr(self._in.fileno(), termios.TCSADRAIN, self._saved_mode)
-        self._saved_mode = None
-        self._footer_row = None
+        saved, self._saved_mode, self._footer_row = self._saved_mode, None, None
+        try:
+            termios.tcsetattr(self._in.fileno(), termios.TCSADRAIN, saved)
+        except (termios.error, OSError):
+            pass  # a closed terminal has no mode left to restore
 
     def _write(self, text: str) -> None:
         try:

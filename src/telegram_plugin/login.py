@@ -14,15 +14,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import fcntl
 import json
 import math
 import os
 import signal
+import sqlite3
 import sys
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -77,6 +79,8 @@ class Pace:
     max_show: float = 60.0
     limit: float = 300.0
     """Give up on the QR after this long without a scan; the operator reruns the command."""
+    grace: float = 10.0
+    """At the limit, how long a scan already being confirmed may still take to land."""
     tick: float = 0.1
     attempts: int = 3
 
@@ -188,10 +192,11 @@ async def _qr_phase(client: Any, ui: Ui, pace: Pace) -> str:
     qr = await client.qr_login()
     # One wait spans every rotation. Its update handler stays registered throughout, so a
     # scan that lands while the next token is being fetched is still caught.
-    waiter = asyncio.ensure_future(qr.wait(pace.limit + pace.max_show))
+    waiter = asyncio.ensure_future(qr.wait(pace.limit + pace.grace + pace.max_show))
     loop = asyncio.get_running_loop()
     deadline = loop.time() + pace.limit
-    rotate_at: float | None = loop.time() + _screen_time(qr, pace)
+    offset = _server_offset(client)
+    rotate_at: float | None = loop.time() + _screen_time(qr, pace, offset)
 
     def seconds_left() -> int:
         return max(math.ceil(rotate_at - pace.rotate_after - loop.time()), 0)
@@ -203,11 +208,15 @@ async def _qr_phase(client: Any, ui: Ui, pace: Pace) -> str:
     try:
         ui.show_qr(url, shown)
         while not waiter.done():
-            if (ui.poll_key() or "").lower() == "p":
+            if rotate_at is not None and _wants_phone(ui.poll_key()):
                 return _PHONE
             now = loop.time()
             if now >= deadline:
-                return _EXPIRED
+                # A scan may be mid-confirmation (a DC switch takes seconds); let it land.
+                await asyncio.wait({waiter}, timeout=pace.grace)
+                if not waiter.done():
+                    return _EXPIRED
+                break
             if rotate_at is not None and now >= rotate_at:
                 try:
                     await qr.recreate()
@@ -223,7 +232,7 @@ async def _qr_phase(client: Any, ui: Ui, pace: Pace) -> str:
                     retry = min(retry * 2, pace.max_retry)
                 else:
                     retry = pace.retry
-                    rotate_at = loop.time() + _screen_time(qr, pace)
+                    rotate_at = loop.time() + _screen_time(qr, pace, offset)
                     shown = seconds_left()
                     ui.show_qr(url, shown)
             if rotate_at is not None and seconds_left() != shown:
@@ -245,9 +254,22 @@ async def _qr_phase(client: Any, ui: Ui, pace: Pace) -> str:
         ui.leave_qr()
 
 
-def _screen_time(qr: Any, pace: Pace) -> float:
-    left = (qr.expires - datetime.now(timezone.utc)).total_seconds()
+def _screen_time(qr: Any, pace: Pace, offset: float = 0.0) -> float:
+    server_now = datetime.now(timezone.utc) + timedelta(seconds=offset)
+    left = (qr.expires - server_now).total_seconds()
     return min(max(left + pace.rotate_after, pace.min_show), pace.max_show)
+
+
+def _server_offset(client: Any) -> float:
+    """Telethon's measure of how far Telegram's clock is ahead of ours; 0 when unknown."""
+    state = getattr(getattr(client, "_sender", None), "_state", None)
+    offset = getattr(state, "time_offset", 0)
+    return float(offset) if isinstance(offset, (int, float)) else 0.0
+
+
+def _wants_phone(keys: str | None) -> bool:
+    # з shares the key with p on the Russian layout.
+    return bool(keys) and any(key in "pPзЗ" for key in keys)
 
 
 def _live_url(qr: Any) -> str | None:
@@ -268,14 +290,10 @@ async def _phone_phase(config: Config, client: Any, ui: Ui, attempts: int) -> st
             ui.say("That is not a phone number. Include the country code, e.g. +44 7700 900123.")
             continue
         try:
-            sent = await client.send_code_request(phone)
+            sent = await _send_code(client, phone)
         except PhoneNumberInvalidError:
             ui.say("Telegram does not accept that number. Check the country code.")
             continue
-        except PhoneNumberBannedError as exc:
-            raise LoginFailed("Telegram has banned this phone number") from exc
-        except FloodWaitError as exc:
-            raise LoginFailed(_flood(exc)) from exc
         break
 
     _publish(config, "code")
@@ -285,6 +303,7 @@ async def _phone_phase(config: Config, client: Any, ui: Ui, attempts: int) -> st
         code = "".join(ui.ask_secret("Login code (hidden as you type): ").split()).replace("-", "")
         if not code:
             continue
+        expired = False
         try:
             await client.sign_in(phone, code=code)
             return _AUTHORIZED
@@ -297,11 +316,23 @@ async def _phone_phase(config: Config, client: Any, ui: Ui, attempts: int) -> st
             ui.say(f"That code is wrong. {_tries_left(attempts - wrong)}")
         except PhoneCodeExpiredError:
             ui.say("That code has expired. Sending a new one.")
-            ui.say(_where_the_code_went(await client.send_code_request(phone)))
+            expired = True
         except PhoneNumberUnoccupiedError as exc:
             raise LoginFailed("no Telegram account uses this phone number") from exc
         except FloodWaitError as exc:
             raise LoginFailed(_flood(exc)) from exc
+        if expired:
+            # Outside the handler, so a refusal here is reported like any other.
+            ui.say(_where_the_code_went(await _send_code(client, phone)))
+
+
+async def _send_code(client: Any, phone: str) -> Any:
+    try:
+        return await client.send_code_request(phone)
+    except PhoneNumberBannedError as exc:
+        raise LoginFailed("Telegram has banned this phone number") from exc
+    except FloodWaitError as exc:
+        raise LoginFailed(_flood(exc)) from exc
 
 
 async def _password_phase(client: Any, ui: Ui, attempts: int) -> None:
@@ -404,7 +435,7 @@ def _status_command(config: Config) -> int:
                 "command or agent, which means a session exists. Let it finish to re-check "
                 "whether the session is still authorised."
             )
-        except (OSError, asyncio.TimeoutError) as exc:
+        except (OSError, sqlite3.Error, asyncio.TimeoutError) as exc:
             payload = status_payload(config, authorized="unknown", account=None)
             payload["hint"] = (
                 f"could not open the session ({describe(exc)}). Checking it needs write access "
@@ -430,6 +461,14 @@ def _written(payload: dict) -> datetime | None:
         return None
 
 
+def _after(written: datetime | None, started: datetime) -> bool:
+    if written is None:
+        return False
+    if written.microsecond == 0:  # the shell launcher stamps to the second
+        started = started.replace(microsecond=0)
+    return written >= started
+
+
 def _alive(pid: Any) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
@@ -442,27 +481,59 @@ def _alive(pid: Any) -> bool:
     return True
 
 
-def _wait_command(config: Config, timeout: float, *, poll: float = 1.0) -> int:
+def _session_held(config: Config) -> bool | None:
+    """Whether some process holds the session lock, as a login does from its first status
+    write to its last. Read-only, so it works in a sandbox; None when it cannot tell."""
+    try:
+        descriptor = os.open(f"{config.session_path}.lock", os.O_RDONLY)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return None
+    else:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(descriptor)
+
+
+def _login_running(config: Config, pid: Any) -> bool:
+    """The lock first: a pid is invisible from inside a sandbox with its own namespace."""
+    held = _session_held(config)
+    return _alive(pid) if held is None else held
+
+
+def _wait_command(
+    config: Config, timeout: float, *, poll: float = 1.0, settle: float = 2.0
+) -> int:
     """Only an outcome written after this started, or by a login seen running, counts:
     an `authorized` left by yesterday's run must not read as today's success."""
     started = datetime.now(timezone.utc)
     deadline = time.monotonic() + timeout
     followed: int | None = None
+    gone_since: float | None = None
     while True:
         payload = _read_status(config)
         if payload is not None:
             written = _written(payload)
             pid = payload.get("pid")
-            relevant = (written is not None and written >= started) or (
-                followed is not None and pid == followed
-            )
+            relevant = _after(written, started) or (followed is not None and pid == followed)
             if payload.get("state") in FINAL_STATES:
                 if relevant:
                     print(json.dumps(payload, ensure_ascii=False, indent=2))
                     return 0 if payload["state"] == "authorized" else 1
-            elif _alive(pid):
-                followed = pid
-            elif relevant:
+            elif _login_running(config, pid):
+                followed, gone_since = pid, None
+            elif relevant and gone_since is None:
+                # A failing login lets go of the lock a moment before it writes why.
+                gone_since = time.monotonic()
+            elif relevant and time.monotonic() - gone_since >= settle:
                 print(json.dumps({
                     "state": "failed",
                     "abandoned": True,
@@ -525,14 +596,22 @@ def _failed(config: Config, hint: str, *, code: int, state: str = "failed") -> i
 
 def _complain(hint: str) -> None:
     sentence = hint[:1].upper() + hint[1:]
-    print(f"✗ {sentence if sentence.endswith('.') else sentence + '.'}", file=sys.stderr)
+    _say(f"✗ {sentence if sentence.endswith('.') else sentence + '.'}", sys.stderr)
+
+
+def _say(text: str, stream: Any) -> None:
+    try:
+        print(text, file=stream, flush=True)
+    except OSError:
+        pass  # the terminal is gone; the outcome is already in the status file
 
 
 def _finished(result: dict) -> int:
     if result["state"] == "authorized":
         account = result["account"]
         lead = "Already logged in" if result.get("already") else "✓ Logged in"
-        print(f"{lead} as {account['name']} (id {account['id']}). Telegram is ready to use.")
+        _say(f"{lead} as {account['name']} (id {account['id']}). Telegram is ready to use.",
+             sys.stdout)
         return 0
     _complain(result["hint"])
     return 1
@@ -540,9 +619,8 @@ def _finished(result: dict) -> int:
 
 @contextlib.contextmanager
 def _interrupts() -> Iterator[None]:
-    """Ctrl-C has to work at a blocking prompt too. asyncio.run's own handler only
-    schedules a cancel, which an `input()` never sees, so it is replaced here; a closed
-    terminal or a kill gets the same treatment, so neither leaves a silent outcome."""
+    """Ctrl-C, a closed terminal and a kill all raise here, even inside a blocking prompt:
+    asyncio.run's own Ctrl-C handler only schedules a cancel that `input()` never sees."""
 
     def interrupt(reason: str) -> Callable[[int, Any], None]:
         def handler(signum: int, frame: Any) -> None:
@@ -596,9 +674,10 @@ def main(
             if not (config.api_id and config.api_hash):
                 raise MissingCredentials()
             if ui is None:
-                if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                from telegram_plugin.terminal import Terminal, is_interactive
+
+                if not is_interactive(sys.stdin, sys.stdout):
                     return _failed(config, NEEDS_TERMINAL, code=1)
-                from telegram_plugin.terminal import Terminal
 
                 ui = Terminal()
             # Overwrite any outcome an earlier run left, before anyone starts polling.
