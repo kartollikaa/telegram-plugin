@@ -21,11 +21,17 @@ from telethon.tl.types.auth import SentCodeTypeApp
 
 
 class StubQr:
-    """Behaves like telethon's QRLogin: `url` and `expires` describe the current token,
-    `recreate` replaces it, and `wait` resolves only while it is running."""
+    """Behaves like telethon's QRLogin against the real server: `url` and `expires`
+    describe the current token, `wait` resolves only while it is running, and `recreate`
+    gets a new token only once the old one has expired by the server's clock. Telegram
+    hands back the same token before that; a double that always issued a fresh one hid
+    a rotation schedule that redrew a dead code."""
 
-    def __init__(self, lifetime=30.0, scan_after=None, outcome="ok", consumed_on_recreate=None):
+    def __init__(self, lifetime=30.0, scan_after=None, outcome="ok", consumed_on_recreate=None,
+                 server_offset=0.0):
         self.lifetime = lifetime
+        self.server_offset = server_offset
+        """Seconds the server's clock is ahead of this one; negative when ours runs ahead."""
         self.scan_after = scan_after
         self.outcome = outcome
         self.consumed_on_recreate = consumed_on_recreate
@@ -37,10 +43,13 @@ class StubQr:
         self._consumed = False
         self._fresh()
 
+    def _server_now(self):
+        return datetime.now(timezone.utc) + timedelta(seconds=self.server_offset)
+
     def _fresh(self):
         self.tokens += 1
         self._url = f"tg://login?token=TOKEN{self.tokens}"
-        self._expires = datetime.now(timezone.utc) + timedelta(seconds=self.lifetime)
+        self._expires = self._server_now() + timedelta(seconds=self.lifetime)
 
     @property
     def url(self):
@@ -59,7 +68,8 @@ class StubQr:
         if self.consumed_on_recreate == len(self.recreations):
             self._consumed = True
             return
-        self._fresh()
+        if self._server_now() >= self._expires:
+            self._fresh()
 
     async def wait(self, timeout=None):
         self.wait_calls += 1

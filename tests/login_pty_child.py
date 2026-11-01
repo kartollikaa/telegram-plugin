@@ -24,7 +24,7 @@ def main_child() -> int:
     except OSError:
         pass
     client = SCENARIOS[scenario]()
-    pace = Pace(rotate_before=0.3, min_show=0.2, max_show=5.0, limit=60.0, tick=0.02)
+    pace = Pace(rotate_after=0.05, min_show=0.2, max_show=5.0, limit=60.0, tick=0.02)
     code = main(["--state-dir", state_dir], client_factory=lambda _: client, pace=pace)
     attributes = termios.tcgetattr(0)
     restored = attributes[3] & termios.ECHO and attributes[3] & termios.ICANON

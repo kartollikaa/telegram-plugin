@@ -24,7 +24,8 @@ from telegram_plugin.login import (
 from tests.login_doubles import ScriptedUi, StubClient, StubQr
 
 # Seconds shrunk so a rotation takes a fraction of a second; the ratios stay realistic.
-FAST = Pace(rotate_before=0.15, min_show=0.05, max_show=5.0, limit=5.0, tick=0.01)
+FAST = Pace(rotate_after=0.05, retry=0.05, max_retry=0.2, min_show=0.05, max_show=5.0,
+            limit=5.0, tick=0.01)
 
 
 def _config(tmp_path, **extra):
@@ -63,17 +64,19 @@ async def test_a_scanned_code_logs_in_and_reports_the_account(tmp_path):
     assert client.disconnected
 
 
-async def test_the_token_is_replaced_before_it_expires_and_the_code_redrawn(tmp_path):
+async def test_the_token_is_replaced_as_it_expires_and_the_code_redrawn(tmp_path):
     """The defect this replaces: the old loop waited 60 s on a 30 s token, so the code
-    on screen was dead for most of every attempt."""
-    qr = StubQr(lifetime=0.4, scan_after=1.3)
+    on screen was dead for most of every attempt. Telegram returns the same token until
+    it expires, so the next one is asked for right after, never long after."""
+    qr = StubQr(lifetime=0.4, scan_after=1.5)
     ui = ScriptedUi()
     await interactive_login(_config(tmp_path), StubClient(qr), ui, FAST)
 
     assert len(qr.recreations) >= 3, qr.recreations
+    assert len(qr.recreations) == qr.tokens - 1, "asked while the token was still alive"
     for left in qr.recreations:
-        assert 0 < left, "a token was replaced only after it had died"
-        assert left <= FAST.rotate_before + 0.1, "a token was replaced long before it had to be"
+        assert left <= 0, "asked before expiry, which only gets the same token back"
+        assert left >= -(FAST.rotate_after + 0.1), "a dead code stayed on screen"
     assert ui.shown() == [f"tg://login?token=TOKEN{n}" for n in range(1, qr.tokens + 1)]
 
 
@@ -95,11 +98,16 @@ async def test_the_countdown_runs_down_to_the_next_code(tmp_path):
     assert counted and counted == sorted(counted, reverse=True)
 
 
-async def test_a_clock_ahead_of_telegram_cannot_turn_rotation_into_a_storm(tmp_path):
-    qr = StubQr(lifetime=-30, scan_after=0.5)
-    pace = Pace(rotate_before=0.15, min_show=0.2, max_show=5.0, limit=5.0, tick=0.01)
-    await interactive_login(_config(tmp_path), StubClient(qr), ScriptedUi(), pace)
-    assert len(qr.recreations) <= 3, qr.recreations
+async def test_a_clock_ahead_of_telegram_backs_off_and_redraws_only_new_codes(tmp_path):
+    """Here every token looks expired on arrival, and the server keeps handing it back."""
+    qr = StubQr(lifetime=0.6, scan_after=1.5, server_offset=-0.5)
+    ui = ScriptedUi()
+    pace = Pace(rotate_after=0.05, retry=0.05, max_retry=0.2, min_show=0.1, max_show=5.0,
+                limit=5.0, tick=0.01)
+    await interactive_login(_config(tmp_path), StubClient(qr), ui, pace)
+    assert qr.tokens >= 2
+    assert len(qr.recreations) <= 5 * qr.tokens, qr.recreations
+    assert ui.shown() == [f"tg://login?token=TOKEN{n}" for n in range(1, qr.tokens + 1)]
 
 
 async def test_a_code_accepted_between_tokens_still_finishes(tmp_path):
@@ -114,7 +122,7 @@ async def test_a_code_accepted_between_tokens_still_finishes(tmp_path):
 async def test_an_unscanned_code_gives_up_at_the_limit(tmp_path):
     config = _config(tmp_path)
     qr = StubQr(lifetime=0.3)
-    pace = Pace(rotate_before=0.1, min_show=0.05, max_show=5.0, limit=0.5, tick=0.01)
+    pace = Pace(rotate_after=0.05, min_show=0.05, max_show=5.0, limit=0.5, tick=0.01)
     result = await interactive_login(config, StubClient(qr), ScriptedUi(), pace)
     assert result["state"] == "expired"
     assert "telegram-login" in result["hint"]
@@ -288,7 +296,7 @@ def test_every_exit_writes_its_outcome_and_says_it(
 
 
 def test_an_unscanned_code_exits_expired(tmp_path, credentials, capsys):
-    pace = Pace(rotate_before=0.1, min_show=0.05, max_show=5.0, limit=0.3, tick=0.01)
+    pace = Pace(rotate_after=0.05, min_show=0.05, max_show=5.0, limit=0.3, tick=0.01)
     code = main(["--state-dir", str(tmp_path)], client_factory=lambda _: StubClient(StubQr()),
                 ui=ScriptedUi(), pace=pace)
     assert code == 1

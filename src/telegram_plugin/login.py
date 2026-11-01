@@ -65,11 +65,15 @@ QR_REMOVED = (
 class Pace:
     """How the QR screen spends time. Telegram issues login tokens for about 30 seconds."""
 
-    rotate_before: float = 5.0
-    """Replace the token this long before it expires, so the code on screen is never dead."""
+    rotate_after: float = 0.5
+    """Ask for the next token this long after the current one expires. Telegram hands back
+    the same token until then (seen live), so asking earlier cannot shorten the gap."""
+    retry: float = 1.0
+    max_retry: float = 5.0
+    """Backoff when the same token comes back anyway: this clock runs ahead of Telegram's."""
     min_show: float = 10.0
-    """Floor on a token's screen time: a clock running ahead of Telegram's would otherwise
-    make every fresh token look expired and turn the loop into a request storm."""
+    """Floor on a fresh token's screen time, for the same clock skew: every token would look
+    expired on arrival and the loop would turn into a request storm."""
     max_show: float = 60.0
     limit: float = 300.0
     """Give up on the QR after this long without a scan; the operator reruns the command."""
@@ -188,10 +192,16 @@ async def _qr_phase(client: Any, ui: Ui, pace: Pace) -> str:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + pace.limit
     rotate_at: float | None = loop.time() + _screen_time(qr, pace)
-    shown = math.ceil(rotate_at - loop.time())
+
+    def seconds_left() -> int:
+        return max(math.ceil(rotate_at - pace.rotate_after - loop.time()), 0)
+
+    shown = seconds_left()
+    url: str | None = qr.url
+    retry = pace.retry
     ui.enter_qr()
     try:
-        ui.show_qr(qr.url, shown)
+        ui.show_qr(url, shown)
         while not waiter.done():
             if (ui.poll_key() or "").lower() == "p":
                 return _PHONE
@@ -203,17 +213,21 @@ async def _qr_phase(client: Any, ui: Ui, pace: Pace) -> str:
                     await qr.recreate()
                 except SessionPasswordNeededError:
                     return _PASSWORD
-                url = _live_url(qr)
+                previous, url = url, _live_url(qr)
                 if url is None:
                     # Accepted between two tokens; the waiter receives the confirmation.
                     rotate_at = None
                     ui.notice("Confirmed on your phone, finishing…")
+                elif url == previous:
+                    rotate_at = loop.time() + retry
+                    retry = min(retry * 2, pace.max_retry)
                 else:
+                    retry = pace.retry
                     rotate_at = loop.time() + _screen_time(qr, pace)
-                    shown = math.ceil(rotate_at - loop.time())
+                    shown = seconds_left()
                     ui.show_qr(url, shown)
-            if rotate_at is not None and math.ceil(rotate_at - loop.time()) != shown:
-                shown = max(math.ceil(rotate_at - loop.time()), 0)
+            if rotate_at is not None and seconds_left() != shown:
+                shown = seconds_left()
                 ui.countdown(shown)
             await asyncio.wait({waiter}, timeout=pace.tick)
         try:
@@ -233,7 +247,7 @@ async def _qr_phase(client: Any, ui: Ui, pace: Pace) -> str:
 
 def _screen_time(qr: Any, pace: Pace) -> float:
     left = (qr.expires - datetime.now(timezone.utc)).total_seconds()
-    return min(max(left - pace.rotate_before, pace.min_show), pace.max_show)
+    return min(max(left + pace.rotate_after, pace.min_show), pace.max_show)
 
 
 def _live_url(qr: Any) -> str | None:
