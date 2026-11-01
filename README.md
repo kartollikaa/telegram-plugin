@@ -72,15 +72,16 @@ agent without local shell access cannot use it at all.
 Requirements: Python 3.10 or newer, with `python3 -m venv` available (on
 Debian/Ubuntu that is the `python3-venv` package).
 
-On its first run the launcher builds a virtualenv and installs Telethon, sending
-every byte of that noise to stderr so stdout stays parseable JSON. The virtualenv
+On its first run the launcher builds a virtualenv and installs Telethon and segno
+(for the login's QR code), sending every byte of that noise to stderr so stdout
+stays parseable JSON. The virtualenv
 lives in the state directory, never in the plugin directory — a plugin directory
 is replaced when the plugin updates.
 
 The virtualenv lives inside the state directory, so pointing
 `TELEGRAM_STATE_DIR` somewhere else — a second account, a throwaway test — gets
 its own dependency install. Set `TELEGRAM_PLUGIN_PYTHON` to an interpreter that
-already has Telethon if you would rather share one.
+already has both if you would rather share one.
 
 ## Credentials
 
@@ -107,28 +108,49 @@ which breaks both of them.
 /telegram:login
 ```
 
-The bundled skill drives the whole thing: it checks the state, installs the
-dependencies if they are missing, then logs in by publishing a `tg://login` link
-you confirm on a device already signed in to Telegram — or scan as a QR code
-from **Settings → Devices → Link Desktop Device**. Nothing is typed, so no code
-or password passes through the conversation, and no agent ever sees a credential.
+The bundled skill checks the state and, if you are not logged in, gives you one
+command. In bb chat it comes with a **Run** button that opens a terminal right under
+the message; in a plain CLI you paste it into your own terminal. The skill then waits
+for that terminal to finish and confirms which account is connected.
 
-The same thing by hand:
+The login itself is one interactive program, `bin/telegram-login`:
+
+1. It draws a QR code in the terminal. Scan it from Telegram on your phone:
+   **Settings → Devices → Link Desktop Device**. Telegram's login tokens live about
+   30 seconds; the code is redrawn in place as each one expires, with a countdown.
+2. Or press `p` and log in with your phone number and the code Telegram sends you.
+3. If the account has two-step verification, the password is asked in the same
+   terminal, with hidden input and your password hint. A wrong one is asked again.
+4. It ends with `Logged in as <name> (id …)`, or a one-line reason why not.
+
+The login code and the password are typed with hidden input, because a terminal's
+output may be read back by an agent (bb's inline terminal reports it to the chat).
+Nothing secret is ever accepted as a command-line argument, so none lands in shell
+history or the process table, and no tool call ever carries one: **a password must
+not travel through a tool call**.
+
+The same commands by hand:
 
 ```bash
+./bin/telegram-login              # log in: QR code, or p for phone and code
 ./bin/telegram-login --status     # is it authorised, and as whom?
-./bin/telegram-login --qr         # publish a link and wait for it
-./bin/telegram-login              # phone, code and password at a prompt
+./bin/telegram-login --wait       # wait for a login running elsewhere to finish
 ```
 
-`--status` prints JSON and changes nothing. It also answers while another command
-holds the session, saying it is in use rather than failing.
+`--status` prints JSON and changes nothing. It answers while another command holds
+the session, saying it is in use, and inside an agent's sandbox, where the state
+directory cannot be written, it says `"authorized": "unknown"` and why instead of
+failing.
 
-**Two-factor accounts finish in a terminal.** A confirmed link is not enough when
-the account has a second factor, and a password must not travel through a tool
-call — so `--qr` stops with `needs_password` and the plugin points you at
-`bin/telegram-login`, which asks with hidden input. Nothing is ever accepted as a
-command-line argument, so no secret lands in shell history or the process table.
+Every way out of the login, including Ctrl-C, a closed terminal, a wrong code too many
+times or a network error, leaves its outcome in `auth-status.json` in the state
+directory: `authorized`, `cancelled`, `failed` or `expired`, with a hint. That file is
+what `--wait` reads. It notices a login whose process died without writing anything,
+and it never mistakes an outcome left by an earlier run for this one. The file never
+holds a login link.
+
+The QR code needs [segno](https://pypi.org/project/segno/), a pure-Python QR encoder.
+An existing install picks it up on the next run of either launcher.
 
 Until a login succeeds, every command answers with the command to run rather than
 a traceback.

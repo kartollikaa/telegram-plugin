@@ -125,13 +125,19 @@ def test_readme_warns_about_the_cold_first_run():
 
 def test_the_readme_leads_with_the_command_not_the_script():
     assert "/telegram:login" in README
-    assert README.index("/telegram:login") < README.index("The same thing by hand")
-    for flag in ("--status", "--qr"):
+    assert README.index("/telegram:login") < README.index("The same commands by hand")
+    for flag in ("--status", "--wait"):
         assert flag in README, flag
 
 
-def test_the_readme_explains_the_two_factor_handoff():
-    assert "needs_password" in README_FLAT
+def test_the_readme_no_longer_offers_the_link_flow():
+    for gone in ("--qr", "tg://", "needs_password"):
+        assert gone not in README, gone
+
+
+def test_the_readme_explains_the_two_factor_step_and_hidden_input():
+    assert "two-step verification" in README_FLAT
+    assert "hidden input" in README_FLAT
     assert "must not travel through a tool call" in README_FLAT
 
 
