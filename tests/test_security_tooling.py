@@ -144,7 +144,9 @@ ALLOWED_RAW_REQUESTS = frozenset({"CheckChatInviteRequest"})
 # The login program runs out of process, in front of a human, and is the only
 # place allowed to authenticate. Keeping its surface separate is the point: these
 # appearing in the gateway would mean an agent-reachable login.
-ALLOWED_LOGIN_ONLY_CALLS = frozenset({"start", "qr_login", "sign_in", "log_out"})
+ALLOWED_LOGIN_ONLY_CALLS = frozenset(
+    {"start", "qr_login", "send_code_request", "sign_in", "log_out"}
+)
 
 
 def _tracked_files() -> list[str]:
