@@ -242,6 +242,48 @@ operation and prints one JSON object.
 (a regular, non-symlink file under the output root) — the two are mutually exclusive.
 Add `--reply-to MESSAGE_ID` to answer a specific message rather than posting a new one.
 
+Use `send CHAT --file RELATIVE_PATH` for a local attachment. JPEG and PNG content
+is sent as an inline Telegram photo by default; other content is sent as a document.
+Ordinary requests to send an image use photo presentation. Only choose
+`send CHAT --document RELATIVE_PATH` for an explicit file/original-document request;
+it preserves the original filename even for images. `--photo RELATIVE_PATH` explicitly
+requires JPEG/PNG content and rejects other formats.
+
+Auto selection inspects the opened stream: a PNG signature followed by its IHDR
+chunk marker, or a JPEG SOI signature followed by a marker. Extensions alone never
+select photo transport. SVG, GIF, WebP and all other formats default to document.
+This is format detection, not a full image decoder: Telegram validates image bytes
+and photo limits, and a rejected photo is reported once without fallback or resend.
+A missing or mismatched photo extension is supplied in memory for Telethon; the
+local file is never renamed. Explicit document uploads preserve the original name.
+
+All input files must be regular, non-symlink files under `TELEGRAM_OUTPUT_ROOT`;
+stage an operator-approved file there before sending it. Absolute paths inside that
+root also work. URLs, directories, symlinks and paths escaping the root are refused.
+An upload holds the opened file descriptor throughout the operation instead of
+reopening its path. The original filename is preserved for documents.
+
+Media accepts `--caption TEXT` or `--caption-file RELATIVE_PATH` (UTF-8, under the
+same root), and `--reply-to MESSAGE_ID`. Captions are literal plain text. Caption
+flags cannot accompany text-only sends. Choose exactly one source: `--text`,
+`--text-file`, `--file`, `--photo` or `--document`. Each invocation sends one message.
+
+On Claude, invoke the plugin launcher; on Codex, use its installed absolute path:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/telegram" send @recipient --file generated.png --caption "Preview"
+"${CLAUDE_PLUGIN_ROOT}/bin/telegram" send @recipient --document report.pdf --caption-file caption.txt --reply-to 123
+```
+
+The send permission and exact recipient rules apply to attachments too. Successful
+media output includes confirmed `message_id`, `chat_id`, `chat_title`, `reply_to`
+and `media_type` (`photo` or `document`, taken from Telegram's response). No local
+path or caption is echoed. Runtime failures use the JSON error contract; invalid
+CLI syntax uses exit 2 and argparse diagnostics. The client disables automatic RPC
+retries, automatic reconnection/replay and flood-wait sleeping. An interrupted or failed upload does not confirm
+message delivery: inspect the chat before any operator-authorized retry.
+
+
 `read` accepts `--min-id`, `--max-id`, `--since`, `--until`, `--from-user` and
 `--media-only`; `thread` accepts `--min-id` to continue past its first page; `search` inside one chat pages backwards on `--max-id`, because results arrive
 newest first. A search **across all chats has no id cursor at all** — ids are only
@@ -298,6 +340,7 @@ prose. The complete set:
 | `unsafe_path` | a read or write path escaped the output root |
 | `invalid_timestamp` | `--since` or `--until` was not ISO 8601 |
 | `send_disabled` | sending is off; nothing was sent |
+| `invalid_send_arguments` | captions without media, or unsupported photo filename |
 | `empty_text` | the message body was empty or whitespace |
 | `flood_wait` | Telegram asked for a wait; the message carries the seconds |
 | `telegram_error` | a plugin error with no more specific code |

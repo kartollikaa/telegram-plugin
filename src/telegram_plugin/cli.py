@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from telegram_plugin.config import Config, load_config_from_environment
-from telegram_plugin.errors import TelegramPluginError, describe
+from telegram_plugin.errors import InvalidSendArguments, TelegramPluginError, describe
 from telegram_plugin.matching import normalize_dialog_text
 from telegram_plugin.paths import read_confined_text
 from telegram_plugin.privacy import private_json, private_output
@@ -129,13 +129,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--dest-dir", dest="dest_dir", help="directory under the output root"
     )
 
-    send = commands.add_parser("send", help="send one explicit text message or reply")
+    send = commands.add_parser("send", help="send one text message, photo or document")
     send.add_argument("chat", help="t.me link, @username or numeric id")
     text_source = send.add_mutually_exclusive_group(required=True)
     text_source.add_argument("--text", help="the message body, as one argument")
     text_source.add_argument(
         "--text-file", help="read the body from this file under the output root"
     )
+    text_source.add_argument("--photo", help="JPEG/PNG file under the output root, sent as a photo")
+    text_source.add_argument("--document", help="file under the output root, sent as a document")
+    text_source.add_argument("--file", help="file under output root: JPEG/PNG as photo, others as document")
+    caption_source = send.add_mutually_exclusive_group()
+    caption_source.add_argument("--caption", help="literal media caption")
+    caption_source.add_argument("--caption-file", help="UTF-8 caption file under the output root")
     send.add_argument(
         "--reply-to", type=positive_integer, help="id of the message being replied to"
     )
@@ -204,6 +210,20 @@ async def dispatch(arguments: argparse.Namespace, application: TelegramApplicati
         )
     if command == "send":
         application.require_send_enabled()
+        media_path = next((path for path in (arguments.photo, arguments.document, arguments.file)
+                           if path is not None), None)
+        if media_path is None and (arguments.caption is not None or arguments.caption_file is not None):
+            raise InvalidSendArguments()
+        if media_path is not None:
+            caption = arguments.caption or ""
+            if arguments.caption_file is not None:
+                caption = read_confined_text(arguments.caption_file, root=application.config.output_root)
+            return await application.send_media(
+                chat=arguments.chat, path=media_path,
+                media_type=("photo" if arguments.photo is not None else
+                            "document" if arguments.document is not None else "auto"),
+                caption=caption, reply_to=arguments.reply_to,
+            )
         text = arguments.text
         if arguments.text_file is not None:
             text = read_confined_text(

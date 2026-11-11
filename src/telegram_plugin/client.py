@@ -114,6 +114,11 @@ class TelegramGateway(Protocol):
         reply_to: int | None = None,
     ) -> dict: ...
 
+    async def send_media(
+        self, ref: ChatRef, stream: Any, *, media_type: str,
+        caption: str = "", reply_to: int | None = None,
+    ) -> dict: ...
+
     async def close(self) -> None: ...
 
 
@@ -307,7 +312,11 @@ class TelethonGateway:
     async def _open_client(self) -> TelegramClient:
         config = self._config
         prepare_session_file(config.session_path)
-        client = TelegramClient(str(config.session_path), config.api_id, config.api_hash)
+        client = TelegramClient(
+            str(config.session_path), config.api_id, config.api_hash,
+            request_retries=0, flood_sleep_threshold=0, raise_last_call_error=True,
+            auto_reconnect=False,
+        )
         await client.connect()
         if not await client.is_user_authorized():
             await client.disconnect()
@@ -597,6 +606,27 @@ class TelethonGateway:
             "chat_id": utils.get_peer_id(entity),
             "chat_title": label(utils.get_display_name(entity)),
             "reply_to": reply_to,
+        }
+
+    async def send_media(
+        self, ref: ChatRef, stream: Any, *, media_type: str,
+        caption: str = "", reply_to: int | None = None,
+    ) -> dict:
+        async with self._session() as client:
+            entity = await self._entity(ref)
+            sent = await client.send_file(
+                entity, stream, caption=caption, reply_to=reply_to,
+                force_document=media_type == "document", parse_mode=None,
+            )
+        confirmed_type = "photo" if sent.photo else "document" if sent.document else None
+        if confirmed_type is None:
+            raise RuntimeError("Telegram did not confirm a media message; inspect the chat before retrying.")
+        return {
+            "message_id": sent.id,
+            "chat_id": utils.get_peer_id(entity),
+            "chat_title": label(utils.get_display_name(entity)),
+            "reply_to": reply_to,
+            "media_type": confirmed_type,
         }
 
     def _render(self, message: Any, username: str | None, internal: int | None) -> dict:

@@ -470,7 +470,7 @@ handled at the boundary rather than by instruction:
   metacharacters before it becomes a path the agent may hand to a shell;
 - display names and chat titles are truncated like message text, since they are
   the one place attacker-authored text arrives wearing a metadata label;
-- `--text-file` is read through a descriptor-relative walk with `O_NOFOLLOW` on
+- Send inputs (`--text-file`, `--photo`, `--document`, `--caption-file`) are read through a descriptor-relative walk with `O_NOFOLLOW` on
   every component and an `fstat` regular-file check, then read from the
   already-open descriptor. Checking the path and then opening it by name is a
   race: between the two, the file can become a symlink out of the output root.
@@ -541,3 +541,31 @@ counts ranging from a handful to well over a hundred and pagination ceilings tha
 are frequently absent. The choices above are the intersection of what those
 projects got right: a small surface, real ceilings, a login that no agent-facing
 command can reach, and flood waits surfaced honestly.
+
+## Outbound attachments
+
+`send` chooses exactly one text, auto file, photo or document input. Media carries an optional
+literal caption and reply target. The application checks send permission before
+reading any input or parsing the exact chat reference. File inputs share the
+output-root confinement policy: descriptor-relative `O_NOFOLLOW` traversal and
+`fstat` regular-file validation, with `O_NONBLOCK` so FIFO inputs cannot hang.
+The opened descriptor, with only the leaf filename attached, lives until the
+locked gateway operation finishes; Telethon never reopens an upload path.
+
+`--file` sniffs JPEG/PNG signatures on the confined descriptor and defaults them
+to photo; other formats (including GIF, SVG and WebP) default to document. The
+sniffer reads a bounded header and restores the position before upload. It detects
+containers, not full image validity; Telegram validates image bytes and limits.
+`--document` always forces document transport and preserves the filename, including
+for images. `--photo` requires JPEG/PNG content. A matching photo extension is
+supplied in memory if necessary, without changing the local file. A failed photo
+has no automatic document fallback. The gateway returns
+the actual media type and IDs from the confirmed message. Local paths and captions
+are not included in success output. All account operations disable automatic RPC
+retries, automatic reconnection and flood-wait sleeping; failures surface once for the operator to assess.
+Retry policy must cover both RPC retry loops and transport reconnection, which can
+requeue unacknowledged requests independently of RPC retries. An offline transport
+test first demonstrates replay with reconnection enabled, then verifies that the
+gateway's actual client configuration disconnects without requeueing.
+A transport failure can leave delivery uncertain and must never trigger an
+agent-driven repeat. The CLI does not upload URLs, albums or directory trees.

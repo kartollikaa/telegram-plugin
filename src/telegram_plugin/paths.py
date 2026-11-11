@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import stat
+from contextlib import contextmanager
 from pathlib import Path
 
 from telegram_plugin.errors import UnsafeInputPath, UnsafePath
@@ -28,7 +29,14 @@ def safe_output_dir(candidate: str | Path, *, root: Path) -> Path:
     return resolved
 
 
-def read_confined_text(candidate: str | Path, *, root: Path) -> str:
+@contextmanager
+def open_confined_file(candidate: str | Path, *, root: Path):
+    stream, name = _open_confined_file(candidate, root=root)
+    with stream:
+        yield NamedUpload(stream, name)
+
+
+def _open_confined_file(candidate: str | Path, *, root: Path):
     text = str(candidate)
     root_resolved = Path(root).resolve()
     raw = Path(candidate)
@@ -45,7 +53,7 @@ def read_confined_text(candidate: str | Path, *, root: Path) -> str:
         raise UnsafeInputPath(text, str(root_resolved))
 
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     directory_fds: list[int] = []
     try:
         directory_fds.append(os.open(root_resolved, directory_flags))
@@ -65,17 +73,43 @@ def read_confined_text(candidate: str | Path, *, root: Path) -> str:
         try:
             if not stat.S_ISREG(os.fstat(file_fd).st_mode):
                 raise UnsafeInputPath(text, str(root_resolved))
-            with os.fdopen(file_fd, "rb") as stream:
-                file_fd = -1
-                return stream.read().decode("utf-8")
+            raw_stream = os.fdopen(file_fd, "rb")
+            file_fd = -1
+            return raw_stream, relative.name
         finally:
             if file_fd >= 0:
                 os.close(file_fd)
-    except (OSError, UnicodeError):
+    except OSError:
         raise UnsafeInputPath(text, str(root_resolved)) from None
     finally:
         for directory_fd in reversed(directory_fds):
             os.close(directory_fd)
+
+
+class NamedUpload:
+    def __init__(self, stream, name: str):
+        self._stream = stream
+        self.name = name
+
+    def read(self, size=-1):
+        return self._stream.read(size)
+
+    def seek(self, offset, whence=0):
+        return self._stream.seek(offset, whence)
+
+    def tell(self):
+        return self._stream.tell()
+
+    def seekable(self):
+        return self._stream.seekable()
+
+
+def read_confined_text(candidate: str | Path, *, root: Path) -> str:
+    with open_confined_file(candidate, root=root) as stream:
+        try:
+            return stream.read().decode("utf-8")
+        except UnicodeError:
+            raise UnsafeInputPath(str(candidate), str(root)) from None
 
 
 def _confine(candidate: str | Path, root: Path, *, allow_root: bool) -> tuple[Path, Path]:
