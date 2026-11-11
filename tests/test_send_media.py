@@ -14,6 +14,8 @@ from telegram_plugin.refs import parse_chat_ref
 from tests.fakes import FakeGateway
 from tests.test_cli import _invoke
 
+PNG = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'PNG DATA'
+
 
 class MediaGateway(FakeGateway):
     def __init__(self):
@@ -47,7 +49,7 @@ def invoke(capsys, tmp_path, args, *, enabled=True, gateway=None):
 def test_media_dispatch(capsys, tmp_path, kind, caption_mode, reply_to):
     root = tmp_path / 'output'
     root.mkdir()
-    (root / 'image.png').write_bytes(b'IMAGE')
+    (root / 'image.png').write_bytes(PNG)
     args = ['@alpha', '--' + kind, 'image.png']
     caption = '' if caption_mode == 'none' else 'literal **caption**; $(never run)\nnext line'
     if caption_mode == 'inline':
@@ -62,11 +64,11 @@ def test_media_dispatch(capsys, tmp_path, kind, caption_mode, reply_to):
     assert captured.err == ''
     assert json.loads(captured.out) == {'message_id': 999, 'chat_id': -1001,
         'chat_title': 'Alpha', 'reply_to': reply_to, 'media_type': kind}
-    assert gateway.uploads == [('alpha', 'image.png', b'IMAGE', kind, caption, reply_to)]
+    assert gateway.uploads == [('alpha', 'image.png', PNG, kind, caption, reply_to)]
     assert gateway.close_calls == 1
 
 
-@pytest.mark.parametrize('kind', ['photo', 'document'])
+@pytest.mark.parametrize('kind', ['file', 'photo', 'document'])
 def test_disabled_before_file_read_or_recipient_resolution(capsys, tmp_path, kind, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError('file access')
@@ -82,7 +84,8 @@ def test_disabled_before_file_read_or_recipient_resolution(capsys, tmp_path, kin
 
 @pytest.mark.parametrize('kind', ['missing', 'directory', 'symlink', 'parent-symlink',
                                   'outside', 'escape', 'fifo', 'unreadable'])
-def test_unsafe_media_never_reaches_gateway(capsys, tmp_path, kind, monkeypatch):
+@pytest.mark.parametrize('option', ['--file', '--document'])
+def test_unsafe_media_never_reaches_gateway(capsys, tmp_path, kind, monkeypatch, option):
     root = tmp_path / 'output'
     root.mkdir()
     (root / 'ok.bin').write_bytes(b'OK')
@@ -113,7 +116,7 @@ def test_unsafe_media_never_reaches_gateway(capsys, tmp_path, kind, monkeypatch)
             return original_open(path, *args, **kwargs)
         monkeypatch.setattr(os, 'open', deny)
         candidate = 'denied.bin'
-    code, captured, gateway = invoke(capsys, tmp_path, ['@alpha', '--document', candidate])
+    code, captured, gateway = invoke(capsys, tmp_path, ['@alpha', option, candidate])
     assert code == 1
     assert json.loads(captured.out)['error']['code'] == 'unsafe_path'
     assert gateway.uploads == []
@@ -125,6 +128,8 @@ def test_unsafe_media_never_reaches_gateway(capsys, tmp_path, kind, monkeypatch)
 
 @pytest.mark.parametrize('args', [
     ['--photo', 'a.png', '--document', 'b.pdf'],
+    ['--file', 'a.png', '--document', 'b.pdf'],
+    ['--file', 'a.png', '--text', 'hi'],
     ['--text', 'hi', '--photo', 'a.png'],
     ['--document', 'a', '--caption', 'hi', '--caption-file', 'caption'],
     ['--document', 'a', '--reply-to', '0'],
@@ -280,3 +285,46 @@ async def test_transport_policy_prevents_replaying_unacknowledged_requests(tmp_p
     replayed, connections, disconnects = await requeued_after_disconnect(client)
     assert replayed == []
     assert (connections, disconnects) == (0, 1)
+
+
+@pytest.mark.parametrize(('name', 'content', 'expected', 'sent_name'), [
+    ('image.png', PNG, 'photo', 'image.png'),
+    ('no-extension', PNG, 'photo', 'no-extension.png'),
+    ('image.jpeg', b'\xff\xd8\xff\xe0JPEG DATA', 'photo', 'image.jpeg'),
+    ('data.bin', b'BINARY DATA', 'document', 'data.bin'),
+    ('fake.png', b'NOT AN IMAGE', 'document', 'fake.png'),
+    ('animation.gif', b'GIF89a', 'document', 'animation.gif'),
+    ('vector.svg', b'<svg/>', 'document', 'vector.svg'),
+    ('empty', b'', 'document', 'empty'),
+])
+def test_auto_media_from_content(capsys, tmp_path, name, content, expected, sent_name):
+    root = tmp_path / 'output'
+    root.mkdir()
+    (root / name).write_bytes(content)
+    code, captured, gateway = invoke(capsys, tmp_path,
+        ['@alpha', '--file', name, '--caption', 'Caption', '--reply-to', '7'])
+    assert code == 0
+    assert json.loads(captured.out)['media_type'] == expected
+    assert gateway.uploads == [('alpha', sent_name, content, expected, 'Caption', 7)]
+
+
+def test_explicit_document_overrides_auto_photo(capsys, tmp_path):
+    root = tmp_path / 'output'
+    root.mkdir()
+    (root / 'picture.png').write_bytes(PNG)
+    code, captured, gateway = invoke(capsys, tmp_path, ['@alpha', '--document', 'picture.png'])
+    assert code == 0
+    assert json.loads(captured.out)['media_type'] == 'document'
+    assert gateway.uploads[0][1:4] == ('picture.png', PNG, 'document')
+
+
+@pytest.mark.parametrize('offset', [0, 3])
+def test_photo_sniff_preserves_stream_position(offset):
+    from io import BytesIO
+
+    from telegram_plugin.media import photo_format
+    stream = BytesIO(b'xxx'[:offset] + PNG)
+    stream.seek(offset)
+    assert photo_format(stream) == 'png'
+    assert stream.tell() == offset
+    assert stream.read() == PNG

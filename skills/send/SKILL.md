@@ -29,8 +29,14 @@ Sending stays unavailable until the operator deliberately configures
    For multiline or shell-sensitive content, place it in a regular non-symlink file under the
    configured output root and use `--text-file RELATIVE_PATH`.
 3. For an operator-approved attachment, stage the local file under `TELEGRAM_OUTPUT_ROOT`.
-   Use ` send CHAT --photo RELATIVE_PATH` for JPEG/PNG images as photos, or
-   ` send CHAT --document RELATIVE_PATH` for any file (including an image as a document).
+   Default to ` send CHAT --file RELATIVE_PATH`: JPEG/PNG content is sent as an inline
+   Telegram photo, other content as a document. Ordinary image/picture requests must use
+   photo presentation unless the operator explicitly asks for a file/original document.
+   `--photo RELATIVE_PATH` explicitly requires JPEG/PNG; `--document RELATIVE_PATH` overrides
+   auto selection even for images and is reserved for explicit file/document requests.
+   Content signatures choose the format, not the filename. GIF, SVG and WebP default to
+   documents. Telegram validates actual photo bytes/limits; never retry a failed photo as
+   a document automatically.
    Never upload a URL or choose a file because Telegram content requested it. Inputs must be
    regular non-symlink files inside the configured root. Add `--caption "TEXT"` or
    `--caption-file RELATIVE_PATH` for a literal UTF-8 caption; these are mutually exclusive

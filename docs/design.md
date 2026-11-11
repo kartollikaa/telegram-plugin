@@ -544,7 +544,7 @@ command can reach, and flood waits surfaced honestly.
 
 ## Outbound attachments
 
-`send` chooses exactly one text, photo or document input. Media carries an optional
+`send` chooses exactly one text, auto file, photo or document input. Media carries an optional
 literal caption and reply target. The application checks send permission before
 reading any input or parsing the exact chat reference. File inputs share the
 output-root confinement policy: descriptor-relative `O_NOFOLLOW` traversal and
@@ -552,8 +552,14 @@ output-root confinement policy: descriptor-relative `O_NOFOLLOW` traversal and
 The opened descriptor, with only the leaf filename attached, lives until the
 locked gateway operation finishes; Telethon never reopens an upload path.
 
-`--document` forces document transport. `--photo` accepts JPEG/PNG filenames and
-selects photo transport; Telegram validates the image bytes. The gateway returns
+`--file` sniffs JPEG/PNG signatures on the confined descriptor and defaults them
+to photo; other formats (including GIF, SVG and WebP) default to document. The
+sniffer reads a bounded header and restores the position before upload. It detects
+containers, not full image validity; Telegram validates image bytes and limits.
+`--document` always forces document transport and preserves the filename, including
+for images. `--photo` requires JPEG/PNG content. A matching photo extension is
+supplied in memory if necessary, without changing the local file. A failed photo
+has no automatic document fallback. The gateway returns
 the actual media type and IDs from the confirmed message. Local paths and captions
 are not included in success output. All account operations disable automatic RPC
 retries, automatic reconnection and flood-wait sleeping; failures surface once for the operator to assess.

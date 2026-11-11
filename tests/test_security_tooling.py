@@ -118,7 +118,7 @@ EXPECTED_COMMANDS: dict[str, tuple[list[str], list[str]]] = {
     ),
     "search": (["--chat", "--limit", "--max-id", "--out", "--out-limit"], ["query"]),
     "download": (["--dest-dir"], ["chat", "message_id"]),
-    "send": (["--caption", "--caption-file", "--document", "--photo", "--reply-to", "--text", "--text-file"], ["chat"]),
+    "send": (["--caption", "--caption-file", "--document", "--file", "--photo", "--reply-to", "--text", "--text-file"], ["chat"]),
 }
 
 # Every Telethon method the agent-facing gateway may call, and every raw request

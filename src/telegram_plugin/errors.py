@@ -152,7 +152,7 @@ class InvalidSendArguments(TelegramPluginError):
     code = "invalid_send_arguments"
 
     def __init__(self) -> None:
-        super().__init__("Captions require --photo or --document; photo files must use .jpg, .jpeg or .png.")
+        super().__init__("Captions require --file, --photo or --document; photos must have JPEG or PNG content.")
 
 
 def describe(exc: BaseException) -> str:

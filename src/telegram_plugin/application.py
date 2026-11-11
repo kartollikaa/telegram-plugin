@@ -14,6 +14,7 @@ from telegram_plugin.errors import (
 )
 from telegram_plugin.jsonl import write_jsonl
 from telegram_plugin.matching import rank_dialogs
+from telegram_plugin.media import photo_format
 from telegram_plugin.paging import paginate
 from telegram_plugin.paths import open_confined_file, safe_output_dir, safe_output_path
 from telegram_plugin.refs import parse_chat_ref
@@ -173,12 +174,25 @@ class TelegramApplication:
         caption: str = "", reply_to: int | None = None,
     ) -> dict:
         self.require_send_enabled()
-        if media_type not in {"photo", "document"}:
+        if media_type not in {"auto", "photo", "document"}:
             raise InvalidSendArguments()
         ref = parse_chat_ref(chat)
         with open_confined_file(path, root=self.config.output_root) as stream:
-            if media_type == "photo" and not stream.name.lower().endswith((".jpg", ".jpeg", ".png")):
-                raise InvalidSendArguments()
+            if media_type == "auto":
+                detected = photo_format(stream)
+                media_type = "photo" if detected else "document"
+                if detected and not stream.name.lower().endswith(
+                    (".jpg", ".jpeg") if detected == "jpg" else (".png",)
+                ):
+                    stream.name = f"{stream.name}.{detected}"
+            elif media_type == "photo":
+                detected = photo_format(stream)
+                if detected is None:
+                    raise InvalidSendArguments()
+                if not stream.name.lower().endswith(
+                    (".jpg", ".jpeg") if detected == "jpg" else (".png",)
+                ):
+                    stream.name = f"{stream.name}.{detected}"
             return await self.gateway.send_media(
                 ref, stream, media_type=media_type, caption=caption, reply_to=reply_to,
             )

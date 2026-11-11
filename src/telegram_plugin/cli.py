@@ -138,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     text_source.add_argument("--photo", help="JPEG/PNG file under the output root, sent as a photo")
     text_source.add_argument("--document", help="file under the output root, sent as a document")
+    text_source.add_argument("--file", help="file under output root: JPEG/PNG as photo, others as document")
     caption_source = send.add_mutually_exclusive_group()
     caption_source.add_argument("--caption", help="literal media caption")
     caption_source.add_argument("--caption-file", help="UTF-8 caption file under the output root")
@@ -209,7 +210,8 @@ async def dispatch(arguments: argparse.Namespace, application: TelegramApplicati
         )
     if command == "send":
         application.require_send_enabled()
-        media_path = arguments.photo if arguments.photo is not None else arguments.document
+        media_path = next((path for path in (arguments.photo, arguments.document, arguments.file)
+                           if path is not None), None)
         if media_path is None and (arguments.caption is not None or arguments.caption_file is not None):
             raise InvalidSendArguments()
         if media_path is not None:
@@ -218,7 +220,8 @@ async def dispatch(arguments: argparse.Namespace, application: TelegramApplicati
                 caption = read_confined_text(arguments.caption_file, root=application.config.output_root)
             return await application.send_media(
                 chat=arguments.chat, path=media_path,
-                media_type="photo" if arguments.photo is not None else "document",
+                media_type=("photo" if arguments.photo is not None else
+                            "document" if arguments.document is not None else "auto"),
                 caption=caption, reply_to=arguments.reply_to,
             )
         text = arguments.text
