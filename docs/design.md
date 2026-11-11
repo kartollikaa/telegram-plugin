@@ -47,7 +47,8 @@ cheap enough — far cheaper than the first handshake, which is paid only at log
   `TELEGRAM_PLUGIN_ALLOW_SEND=1`, and it refuses before the gateway is touched.
 - **No agent-visible secrets.** The agent can display QR frames from a login process.
   Phone numbers, login codes and two-step passwords are entered by the operator in a
-  terminal; codes and passwords use hidden input and never pass through a tool call.
+  private local form or human-owned terminal. Codes and passwords are masked and never
+  pass through a tool call. Agents never inspect the form, its DOM, or its requests.
 - **No hosted execution.** The plugin needs a local Python runtime and a session
   file on disk. A web-only or mobile-only agent cannot run it, and the
   documentation says so rather than implying otherwise.
@@ -63,7 +64,7 @@ One repository, two executables — the CLI agents call and the login a human ru
 plugin.json                  portable Agent Plugins manifest — the canonical one
 .claude-plugin/plugin.json   Claude Code compatibility manifest, skills only
 bin/telegram                 the CLI every agent calls
-bin/telegram-login           interactive login, run by a human in a terminal
+bin/telegram-login           login/logout, private local form or human-owned terminal
 skills/read/SKILL.md         /telegram:read — the flows, and the output-hygiene rules
 skills/login/SKILL.md        /telegram:login — drives a login to completion
 skills/logout/SKILL.md       /telegram:logout — confirms and revokes the plugin session
@@ -203,27 +204,39 @@ still share one account:
 Resolved chats are cached for the life of a connection, which removes a round
 trip per call, and the cache dies with the client because entities belong to it.
 
-`bin/telegram-login` is a separate process. The login skill asks the operator to choose
-QR or phone before starting authentication. The agent can run QR mode without a TTY
-and forward its live frames into the CLI conversation. Secret input stays in a terminal;
-in bb the command block's Run button opens one inline in the same session.
+`bin/telegram-login` is a separate process. The login skill offers QR or phone,
+then launches the selected method itself with `--browser`. This adapter opens a
+short-lived loopback form on the operator's machine, so an agent's non-interactive
+Bash pipe needs no secret input. Phone → code → password and QR → password complete
+on that same page. The browser renders a single QR canvas and updates it in place.
 
-- No flags: a menu asks for phone number and login code, or QR. A QR code is drawn as half-block text that fits an 80×24
-  terminal, black on white whatever the terminal theme, on the terminal's alternate screen, so redrawing
-  never scrolls and quitting leaves the scrollback as it was. `p` switches to phone
-  number and login code; a two-step password is asked in the same session with the
-  account's hint, and a wrong one is asked again. The login code is
-  hidden too: bb's inline terminal reports its output back to the agent.
-- `--method phone` skips the menu and starts phone login in a terminal.
-- `--method qr` skips the menu and starts QR login. Without a TTY, each new frame is
-  flushed to stdout as plain half-block text without terminal escape sequences. Two stacked
-  copies in opposite polarity preserve a light quiet zone on either host theme and avoid
-  widening the code past a narrow conversation column. The agent
-  shows the actual frame immediately and replaces it when a new one arrives; it must not
-  wait for process exit or direct a streaming host's QR user to a separate terminal.
-- If a non-TTY QR needs two-step verification, the process reports `needs_password` and
-  exits `4`. `--resume` reconnects the same session and asks only for the hidden password
-  in a terminal. It never starts another QR or accepts secrets as arguments or tool input.
+The form binds only to loopback with a random URL path and per-process CSRF token.
+POSTs require the exact Host and Origin, bounded bodies, and the current prompt revision;
+stale submissions cannot answer a later prompt. It sends no CORS permission, disables
+caching and referrers, uses nonce-based CSP, and renders text with `textContent`.
+Submitted secrets never appear in GET state, status files, stdout, request logs or
+CLI arguments. Fields clear on submission. Cancellation, a session deadline, errors
+and success all close the listener and clear pending input. A browser launch failure
+is reported explicitly. A closed tab is not treated as proof of cancellation: the
+session deadline still bounds it. Cancellation and deadlines monitor pending network
+calls too, not only prompts. Each page receives its own invocation's outcome, captured
+before releasing the session lock; it must never infer that result from a shared status
+file after unlocking. Only the human may access the live form.
+Unauthorised-command errors and post-login logout hints also name the browser-capable
+entrypoints, so a runtime hint cannot send the operator back to manual terminal input.
+
+- No flags: the terminal menu offers phone or QR; `--browser` puts that menu in the form.
+- `--method phone` skips the menu. With `--browser`, all input stays in the form;
+  otherwise a human-owned terminal is required and codes/passwords use hidden input.
+- `--method qr` skips the menu. In a terminal it uses the alternate screen and `p`
+  switches to phone. Without a TTY it flushes one complete half-block frame per token,
+  without escape sequences, using `--theme dark|light` for the output surface. The agent
+  must never reproduce the QR in an assistant message; generation delays and corrupts it.
+  Raw output visibility is a host capability, not something pseudo-terminal tests prove.
+  Hosts without it use the automatic form instead of a command handed to the operator.
+- If a CLI-only QR returns `needs_password` / exit `4`, `--browser --resume` asks only
+  for the password against the approved session. A QR started with `--browser` continues
+  to 2FA on the same page, without a resume command or another scan.
 - `--logout` takes the same session lock, names the account, and asks for confirmation.
   Only an affirmative answer calls Telethon's `log_out()`, which revokes the remote session
   and deletes the local session file. Declining preserves the session. A false return or
@@ -264,18 +277,13 @@ read from the session lock the login holds, because a sandbox with its own pid
 namespace cannot see the login's pid. The
 file never holds a login link.
 
-**Why the detached `--qr` mode is gone.** It existed so an agent could drive a login
-with no terminal: it published a `tg://login` link and waited. In practice the link
-opens only inside a Telegram app, so it is useless in a chat on the same machine; a
-QR image of it posted to chat goes stale within seconds; and it could not finish a
-two-step login, which sent the operator to a terminal anyway. Every host this plugin
-runs on gives the operator a terminal, and the terminal flow covers every case, so
-there is no use left for it. `--qr` now exits with a pointer to the command.
+**Why the detached `--qr` mode is gone.** Publishing a login link does not provide
+an input surface for 2FA. The current browser adapter owns both QR rendering and secret
+input; CLI QR remains an explicit option for hosts that show raw output. The old flag
+still exits with a pointer to the supported commands.
 
-Secrets are read from a prompt, never from a command-line argument, where they
-would land in shell history and in the process table. The lock is taken before
-the credentials are even looked at: if another client owns the session, nothing
-else about this invocation matters.
+Secrets are read from a private form or hidden prompt, never from command arguments.
+The lock is taken before checking credentials: competing clients must never share an auth key.
 
 Every command checks authorisation first and, when there is none, returns a short
 instruction naming the command to run. No traceback.

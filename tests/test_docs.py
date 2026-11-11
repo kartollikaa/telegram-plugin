@@ -125,7 +125,7 @@ def test_readme_warns_about_the_cold_first_run():
 
 def test_the_readme_leads_with_the_command_not_the_script():
     assert "/telegram:login" in README
-    assert README.index("/telegram:login") < README.index("The same commands by hand")
+    assert README.index("/telegram:login") < README.index("Manual commands")
     for flag in ("--status", "--wait"):
         assert flag in README, flag
 

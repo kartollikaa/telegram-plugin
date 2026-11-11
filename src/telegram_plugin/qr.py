@@ -45,8 +45,8 @@ def render(text: str, *, quiet_zone: int = QUIET_ZONE, color: bool = True) -> li
     return lines
 
 
-def render_for_chat(text: str) -> list[str]:
-    """Opposite polarities keep a light quiet zone on either chat theme."""
+def render_for_chat(text: str, *, theme: str = "dark") -> list[str]:
+    """One frame with a light quiet zone in the selected output theme."""
     lines = render(text, color=False)
     inverse = str.maketrans("█▀▄ ", " ▄▀█")
-    return [*lines, "", *(line.translate(inverse) for line in lines)]
+    return [line.translate(inverse) for line in lines] if theme == "dark" else lines

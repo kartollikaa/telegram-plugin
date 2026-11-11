@@ -40,6 +40,7 @@ def test_every_read_command_explains_how_to_log_in(command, capsys, tmp_path):
     error = json.loads(captured.out)["error"]
     assert error["code"] == "not_authorized"
     assert "telegram-login" in error["message"]
+    assert "--browser" in error["message"]
     assert "Traceback" not in captured.out
     assert captured.err == ""
 
@@ -56,6 +57,7 @@ def test_the_send_command_is_also_guarded(capsys, tmp_path):
     error = json.loads(captured.out)["error"]
     assert error["code"] == "not_authorized"
     assert "telegram-login" in error["message"]
+    assert "--browser" in error["message"]
 
 
 def test_every_read_command_is_covered_by_this_file():

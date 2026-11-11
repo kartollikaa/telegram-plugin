@@ -9,24 +9,26 @@ allowed-tools:
 
 # Logging out
 
-Check `"${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --status` first. On another host use the
-installed launcher's absolute path. If a sandbox blocks status, rerun outside it; if another
-process holds the session, let it finish before continuing.
+Run `"${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --status` yourself first; on another host
+use the installed absolute path. Resolve sandbox access or wait for `session_in_use`
+before continuing. Never read session files or credentials.
 
-Resolve the absolute path; the operator's shell does not have `${CLAUDE_PLUGIN_ROOT}`.
-Give the operator one command in a fenced `bash` block. In bb, use its Run button for an inline
-terminal; in a plain CLI, use the current terminal:
+Start this yourself using the host's background/process-session facility:
 
 ```bash
-'/absolute/path/to/plugin/bin/telegram-login' --logout
+"${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --browser --logout
 ```
 
-The command names the connected account and asks for confirmation before revoking this
-plugin's Telegram session. An empty answer or `n` cancels. Other Telegram devices, API
-credentials, and downloads are kept. Do not delete a session file as a substitute for logout.
+The plugin automatically opens a private local form, names the connected account and asks
+for confirmation before revoking this plugin's session. An empty answer or `n` cancels.
+Do not give the operator a command to paste or send them to a terminal. Do not inspect the
+form with browser tools or screenshots; it is human-only, as in the login skill.
 
-Wait for the terminal result or use `--wait` once the operator starts it. `logged_out` / exit
-`0` means logout succeeded or no authorised plugin session existed. `cancelled` means the
-operator declined or interrupted; `failed` means revocation was not confirmed. Relay the hint
-and check `--status` before claiming the account is disconnected. If they asked to switch
-accounts, continue with `/telegram:login` after logout succeeds.
+Observe the original process. If its handle is unavailable, run `--wait` once while it is
+running. `logged_out` / exit `0` means success or an already unauthorised session.
+`cancelled` means the operator declined/interrupted; `failed` means revocation was not
+confirmed. Relay the hint and check `--status` before claiming disconnection; an unknown
+status is not proof. Do not delete a session file as a substitute for logout. API credentials,
+downloads and other Telegram devices are kept. If switching accounts was requested, continue
+with `/telegram:login` only after successful logout. Browser launch failure must be reported,
+not presented as an opened form; remote/headless hosts need a human-owned local input surface.

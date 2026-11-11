@@ -56,8 +56,8 @@ COMMAND = "bin/telegram-login"
 
 NEEDS_TERMINAL = (
     f"{COMMAND} is interactive and needs a terminal for login choices, hidden passwords "
-    "and logout confirmation. Run it in your current terminal, or press Run under the "
-    "command block in bb chat to use the inline terminal."
+    f"and logout confirmation. Run {COMMAND} --browser to open a private local form "
+    "automatically when the host has no interactive input."
 )
 QR_REMOVED = (
     f"--qr was replaced: run {COMMAND} --method qr for QR frames in command output, "
@@ -142,7 +142,7 @@ def status_payload(config: Config, *, authorized: Any, account: dict | None) -> 
             f"https://my.telegram.org and put both into {config.dotenv_path}"
         )
     elif authorized is False:
-        payload["hint"] = f"not logged in — run {COMMAND} in a terminal"
+        payload["hint"] = f"not logged in — run {COMMAND} --browser"
     return payload
 
 
@@ -195,7 +195,7 @@ async def interactive_login(
                     "state": "needs_password",
                     "hint": (
                         "QR approved; this account needs its two-step password. "
-                        f"Run {COMMAND} --resume in a terminal with hidden input. "
+                        f"Run {COMMAND} --browser --resume for private input. "
                         "The QR does not need to be scanned again."
                     ),
                 })
@@ -633,6 +633,10 @@ def _parse(argv: list[str]) -> argparse.Namespace:
         help="wait for a login started elsewhere to finish, then print its outcome",
     )
     mode.add_argument("--qr", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--browser", action="store_true",
+                        help="automatically open a private local sign-in or logout form")
+    parser.add_argument("--theme", choices=("dark", "light"), default="dark",
+                        help="theme for QR frames in command output (default: dark)")
     parser.add_argument(
         "--timeout",
         type=float,
@@ -640,7 +644,10 @@ def _parse(argv: list[str]) -> argparse.Namespace:
         help=f"seconds --wait waits (default {DEFAULT_WAIT:.0f})",
     )
     parser.add_argument("--state-dir", help="override the state directory")
-    return parser.parse_args(argv)
+    arguments = parser.parse_args(argv)
+    if arguments.browser and (arguments.status or arguments.wait or arguments.qr):
+        parser.error("--browser is for login or logout, not status or wait")
+    return arguments
 
 
 def _failed(config: Config, hint: str, *, code: int, state: str = "failed") -> int:
@@ -679,7 +686,7 @@ def _finished(result: dict) -> int:
         lead = "Already logged in" if result.get("already") else "✓ Logged in"
         _say(f"{lead} as {account['name']} (id {account['id']}). Telegram is ready to use.",
              sys.stdout)
-        _say(f"To log out, run {COMMAND} --logout.", sys.stdout)
+        _say(f"To log out, use /telegram:logout or run {COMMAND} --browser --logout.", sys.stdout)
         return 0
     _complain(result["hint"])
     return 1
@@ -733,6 +740,14 @@ def main(
     if arguments.qr:
         return _failed(config, QR_REMOVED, code=2)
 
+    browser_ui = None
+    outcome = None
+
+    def fail(hint: str, *, code: int, state: str = "failed") -> int:
+        nonlocal outcome
+        outcome = {"state": state, "hint": hint}
+        return _failed(config, hint, code=code, state=state)
+
     try:
         ensure_state_dir(config)
         # Taken before anything else, including the credentials check: if a command holds
@@ -740,17 +755,23 @@ def main(
         # would revoke it. Waiting, because the holder lets go once it goes idle.
         with session_lock(config.session_path, config.lock_wait):
             if arguments.logout and not config.session_path.exists():
-                return _finished(write_status(config, {"state": "logged_out", "already": True}))
+                outcome = write_status(config, {"state": "logged_out", "already": True})
+                return _finished(outcome)
             if not (config.api_id and config.api_hash):
                 raise MissingCredentials()
             if ui is None:
                 from telegram_plugin.terminal import QrOutput, Terminal, is_interactive
 
-                can_prompt = is_interactive(sys.stdin, sys.stdout)
-                if not can_prompt and arguments.method != "qr":
-                    return _failed(config, NEEDS_TERMINAL, code=1)
+                if arguments.browser:
+                    from telegram_plugin.browser_login import BrowserUi
 
-                ui = Terminal() if can_prompt else QrOutput()
+                    browser_ui = BrowserUi()
+                    ui, can_prompt = browser_ui, True
+                else:
+                    can_prompt = is_interactive(sys.stdin, sys.stdout)
+                    if not can_prompt and arguments.method != "qr":
+                        return fail(NEEDS_TERMINAL, code=1)
+                    ui = Terminal() if can_prompt else QrOutput(theme=arguments.theme)
             else:
                 can_prompt = True
             # Overwrite any outcome an earlier run left, before anyone starts polling.
@@ -758,34 +779,39 @@ def main(
             client = (client_factory or _telethon_client)(config)
             with _interrupts():
                 if arguments.logout:
-                    result = asyncio.run(interactive_logout(config, client, ui))
+                    operation = interactive_logout(config, client, ui)
                 else:
                     method = "resume" if arguments.resume else arguments.method
-                    result = asyncio.run(interactive_login(
+                    operation = interactive_login(
                         config, client, ui, pace, method=method, can_prompt=can_prompt,
-                    ))
-            return _finished(result)
+                    )
+                outcome = asyncio.run(browser_ui.run(operation) if browser_ui else operation)
+            return _finished(outcome)
     except SessionLocked as exc:
-        return _failed(config, describe(exc), code=1)
+        return fail(describe(exc), code=1)
     except MissingCredentials as exc:
-        return _failed(config, describe(exc), code=2)
+        return fail(describe(exc), code=2)
     except LoginFailed as exc:
         command = f"{COMMAND} --logout" if arguments.logout else COMMAND
-        return _failed(config, f"{exc.hint}; run {command} again to retry", code=1)
+        return fail(f"{exc.hint}; run {command} again to retry", code=1)
     except Interrupted as exc:
         hint = "logout interrupted; check --status" if arguments.logout else (
-            f"{exc.reason}, no account was connected"
+            f"{exc.reason}; check --status before retrying"
         )
-        return _failed(config, hint,
-                       code=130, state="cancelled")
+        return fail(hint, code=130, state="cancelled")
     except (EOFError, KeyboardInterrupt):
         hint = "logout interrupted; check --status" if arguments.logout else (
-            "login cancelled, no account was connected"
+            "login cancelled; check --status before retrying"
         )
-        return _failed(config, hint,
-                       code=130, state="cancelled")
+        return fail(hint, code=130, state="cancelled")
     except Exception as exc:  # noqa: BLE001
-        return _failed(config, describe(exc), code=1)
+        return fail(describe(exc), code=1)
+    finally:
+        if browser_ui is not None:
+            try:
+                browser_ui.finish(outcome or {"state": "failed"})
+            finally:
+                browser_ui.close()
 
 
 if __name__ == "__main__":

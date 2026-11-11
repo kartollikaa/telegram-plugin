@@ -114,7 +114,7 @@ def test_ctrl_c_on_the_code_screen_cancels_and_hands_the_terminal_back(tmp_path)
     operator.type("2\r")
     operator.expect("New code in")
     operator.type("\x03")
-    operator.expect("Login cancelled, no account was connected.")
+    operator.expect("Login cancelled; check --status before retrying.")
     assert operator.finish() == 130
     assert operator.seen.rindex(MAIN_SCREEN) > operator.seen.rindex(ALTERNATE_SCREEN)
     assert "TTY-RESTORED" in operator.seen
