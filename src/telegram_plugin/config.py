@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from telegram_plugin.state import read_private_text
+
 DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2", "segno>=1.6,<2")
 
 # Below this, Telethon honoured an absolute path in a sender-supplied file name.
@@ -35,7 +37,7 @@ def parse_dotenv(text: str) -> dict[str, str]:
 @dataclass(frozen=True)
 class Config:
     api_id: int | None
-    api_hash: str | None
+    api_hash: str | None = field(repr=False)
     state_dir: Path
     session_name: str
     allow_send: bool
@@ -45,6 +47,12 @@ class Config:
     lock_wait: float
     unreadable: tuple[str, ...] = field(default=())
     """Variables that were set but could not be read as a number, so a default stands in."""
+
+    def __post_init__(self) -> None:
+        name = self.session_name
+        if (not name or name in (".", "..") or any(c in name for c in "/\\")
+                or any(ord(c) < 32 or ord(c) == 127 for c in name)):
+            raise ValueError("TELEGRAM_SESSION_NAME must be a plain file basename")
 
     @property
     def session_path(self) -> Path:
@@ -132,7 +140,8 @@ def load_config_from_environment(env: Mapping[str, str]) -> Config:
     """Two passes: the first locates the state directory, the second reads its .env."""
     bootstrap = load_config(env)
     try:
-        text = bootstrap.dotenv_path.read_text(encoding="utf-8")
-    except OSError:
+        bootstrap.dotenv_path.lstat()
+        text = read_private_text(bootstrap.dotenv_path)
+    except FileNotFoundError:
         return bootstrap
     return load_config(env, text)

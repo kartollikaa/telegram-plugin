@@ -47,6 +47,13 @@ from telethon.tl.types.auth import SentCodeTypeApp, SentCodeTypeCall, SentCodeTy
 from telegram_plugin.client import ensure_state_dir, session_lock
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import MissingCredentials, SessionLocked, describe
+from telegram_plugin.state import (
+    open_private_file,
+    prepare_session_file,
+    read_private_text,
+    tighten_private_file,
+    write_private_text,
+)
 
 FINAL_STATES = frozenset({
     "authorized", "logged_out", "needs_password", "cancelled", "failed", "expired",
@@ -150,10 +157,8 @@ def write_status(config: Config, payload: dict) -> dict:
     """Stamped with time and writer: a poller must be able to tell a stale file, and a
     login whose process died, from one still in progress."""
     path = config.auth_status_path
-    path.parent.mkdir(parents=True, exist_ok=True)
     stamped = {**payload, "pid": os.getpid(), "written": datetime.now(timezone.utc).isoformat()}
-    path.write_text(json.dumps(stamped, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    path.chmod(0o600)
+    write_private_text(path, json.dumps(stamped, ensure_ascii=False, indent=2) + "\n")
     return stamped
 
 
@@ -453,12 +458,12 @@ async def _describe_me(client: Any) -> dict:
 
 
 def _tighten(path: Path) -> None:
-    if path.exists():
-        path.chmod(0o600)
+    tighten_private_file(path)
 
 
 async def _report_status(config: Config) -> dict:
     # Quick to give up: a status that retries for a minute is a worse answer than "unknown".
+    prepare_session_file(config.session_path)
     client = TelegramClient(
         str(config.session_path), config.api_id, config.api_hash,
         connection_retries=1, retry_delay=0, timeout=10,
@@ -503,7 +508,7 @@ def _status_command(config: Config) -> int:
 
 def _read_status(config: Config) -> dict | None:
     try:
-        payload = json.loads(config.auth_status_path.read_text(encoding="utf-8"))
+        payload = json.loads(read_private_text(config.auth_status_path))
     except (OSError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
@@ -540,7 +545,7 @@ def _session_held(config: Config) -> bool | None:
     """Whether some process holds the session lock, as a login does from its first status
     write to its last. Read-only, so it works in a sandbox; None when it cannot tell."""
     try:
-        descriptor = os.open(f"{config.session_path}.lock", os.O_RDONLY)
+        descriptor = open_private_file(Path(f"{config.session_path}.lock"), tighten=False)
     except FileNotFoundError:
         return False
     except OSError:
@@ -717,6 +722,7 @@ def _interrupts() -> Iterator[None]:
 
 
 def _telethon_client(config: Config) -> Any:
+    prepare_session_file(config.session_path)
     return TelegramClient(str(config.session_path), config.api_id, config.api_hash)
 
 
@@ -731,7 +737,16 @@ def main(
     environment = dict(os.environ)
     if arguments.state_dir:
         environment["TELEGRAM_STATE_DIR"] = arguments.state_dir
-    config = load_config_from_environment(environment)
+    try:
+        config = load_config_from_environment(environment)
+    except (OSError, ValueError) as exc:
+        if arguments.status:
+            print(json.dumps({"authorized": "unknown", "credentials": "unknown",
+                              "hint": f"Could not safely read configuration: {describe(exc)}. "
+                              "Check state permissions and sandbox access."}))
+            return 0
+        _complain(describe(exc))
+        return 1
 
     if arguments.status:
         return _status_command(config)

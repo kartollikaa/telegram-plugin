@@ -45,7 +45,7 @@ cheap enough — far cheaper than the first handshake, which is paid only at log
   plugin cannot give back.
 - **Sending is off by default.** `send` exists but refuses unless
   `TELEGRAM_PLUGIN_ALLOW_SEND=1`, and it refuses before the gateway is touched.
-- **No agent-visible secrets.** The agent can display QR frames from a login process.
+- **Private credential input.** The agent can display QR frames from a login process.
   Phone numbers, login codes and two-step passwords are entered by the operator in a
   private local form or human-owned terminal. Codes and passwords are masked and never
   pass through a tool call. Agents never inspect the form, its DOM, or its requests.
@@ -142,6 +142,11 @@ way to pay that cost deliberately.
 ## Configuration and state
 
 Nothing secret lives in the repository; only `.env.example` does.
+
+[Authentication and local trust](auth-security.md) defines the application credential
+policy and filesystem boundary. Local code running as the session owner can bypass
+the CLI's send flag; private input is not a sandbox for that code. Reject linked or
+unowned state through descriptor checks before reading it or changing permissions.
 
 | Variable | Meaning | Default |
 |---|---|---|

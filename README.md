@@ -85,6 +85,11 @@ already has both if you would rather share one.
 
 ## Credentials
 
+API credentials identify the client application; they do not grant access to an
+account without its login approval. This local plugin requires your own pair:
+it does not distribute a shared API hash. See [authentication and local trust](docs/auth-security.md)
+for the credential tradeoff, session protection and the limits of the send flag.
+
 Create an application at https://my.telegram.org to get an API id and hash. Copy
 [`.env.example`](.env.example) to the state directory as `.env` and fill both in:
 
@@ -149,7 +154,8 @@ Manual commands, if you choose to run the launcher yourself:
 ./bin/telegram-login --wait
 ```
 
-`--status` prints JSON and changes nothing. It answers while another command holds
+`--status` prints JSON without starting login or logout. Checking an existing
+session can create a lock and tighten session-file permissions. It answers while another command holds
 the session, saying it is in use, and inside an agent's sandbox, where the state
 directory cannot be written, it says `"authorized": "unknown"` and why instead of
 failing.

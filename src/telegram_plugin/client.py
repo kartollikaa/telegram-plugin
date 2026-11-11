@@ -36,6 +36,13 @@ from telegram_plugin.errors import (
 )
 from telegram_plugin.refs import ChatRef
 from telegram_plugin.render import label, render_message, safe_name
+from telegram_plugin.state import (
+    open_private_file,
+    prepare_session_file,
+    private_directory,
+    session_files,
+    tighten_private_file,
+)
 
 SCAN_MULTIPLIER = 20
 MIN_SCAN_CAP = 1000
@@ -111,8 +118,8 @@ class TelegramGateway(Protocol):
 
 
 def ensure_state_dir(config: Config) -> None:
-    config.state_dir.mkdir(parents=True, exist_ok=True)
-    config.state_dir.chmod(0o700)
+    with private_directory(config.state_dir):
+        pass
 
     # The output root may be anywhere the operator points it, including a
     # directory they use for other things — tighten only what we own.
@@ -121,9 +128,8 @@ def ensure_state_dir(config: Config) -> None:
     if ours:
         config.output_root.chmod(0o700)
 
-    for private_file in (config.dotenv_path, config.session_path):
-        if private_file.exists():
-            private_file.chmod(0o600)
+    for private_file in (config.dotenv_path, *session_files(config.session_path)):
+        tighten_private_file(private_file)
 
 
 def _inside(path: Path, parent: Path) -> bool:
@@ -158,10 +164,8 @@ def _try_session_lock(path: str | Path) -> SessionLockHandle | None:
     as "held by another process" sends the operator hunting a process that is not
     there."""
     lock_path = Path(f"{path}.lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    descriptor = open_private_file(lock_path, create=True)
     try:
-        os.chmod(lock_path, 0o600)
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
         os.close(descriptor)
@@ -302,6 +306,7 @@ class TelethonGateway:
 
     async def _open_client(self) -> TelegramClient:
         config = self._config
+        prepare_session_file(config.session_path)
         client = TelegramClient(str(config.session_path), config.api_id, config.api_hash)
         await client.connect()
         if not await client.is_user_authorized():

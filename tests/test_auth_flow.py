@@ -442,7 +442,7 @@ def test_status_answers_where_the_state_directory_cannot_be_written(tmp_path, mo
     assert main(["--status", "--state-dir", str(tmp_path)]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["authorized"] == "unknown"
-    assert payload["credentials"] == "present"
+    assert payload["credentials"] == "unknown"
     assert "sandbox" in payload["hint"]
 
 
