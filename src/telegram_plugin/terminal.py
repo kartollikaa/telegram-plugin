@@ -11,6 +11,7 @@ import termios
 import tty
 from typing import TextIO
 
+from telegram_plugin.privacy import redact_text
 from telegram_plugin.qr import DARK_ON_LIGHT, RESET, render, render_for_chat
 
 ALTERNATE_SCREEN = "\x1b[?1049h"
@@ -43,13 +44,13 @@ class Terminal:
         self._footer_row: int | None = None
 
     def say(self, text: str = "") -> None:
-        self._write(text + "\n")
+        self._write(redact_text(text) + "\n")
 
     def ask(self, prompt: str) -> str:
-        return input(prompt)
+        return input(redact_text(prompt))
 
     def ask_secret(self, prompt: str) -> str:
-        return getpass.getpass(prompt)
+        return getpass.getpass(redact_text(prompt))
 
     def enter_qr(self) -> None:
         fd = self._in.fileno()
@@ -69,10 +70,12 @@ class Terminal:
                 f"The window is {columns}x{rows}; the code needs {width}x{needed_rows}. "
                 "Enlarge it, or press p."
             )
+        frame = [redact_text(line) for line in frame]
         # Text lines wrap in a narrow window; the footer row has to count that.
         self._footer_row = sum(_rows(line, columns) for line in frame) + len(plain) + 2
-        frame += [f"{DARK_ON_LIGHT}{line}{RESET}" for line in plain] + [""]
-        self._write(CLEAR_SCREEN + "\n".join(frame) + "\n" + FOOTER.format(seconds=seconds))
+        frame += [f"{DARK_ON_LIGHT}{redact_text(line)}{RESET}" for line in plain] + [""]
+        self._write(CLEAR_SCREEN + "\n".join(frame) + "\n"
+                    + redact_text(FOOTER.format(seconds=seconds)))
 
     def countdown(self, seconds: int) -> None:
         self.notice(FOOTER.format(seconds=seconds))
@@ -80,7 +83,7 @@ class Terminal:
     def notice(self, text: str) -> None:
         if self._footer_row is None:
             return
-        self._write(f"\x1b[{self._footer_row};1H{CLEAR_TO_END}{text}")
+        self._write(f"\x1b[{self._footer_row};1H{CLEAR_TO_END}{redact_text(text)}")
 
     def poll_key(self) -> str | None:
         fd = self._in.fileno()
@@ -115,7 +118,7 @@ class QrOutput:
         self._theme = theme
 
     def say(self, text: str = "") -> None:
-        sys.stdout.write(text + "\n")
+        sys.stdout.write(redact_text(text) + "\n")
         sys.stdout.flush()
 
     def ask(self, prompt: str) -> str:

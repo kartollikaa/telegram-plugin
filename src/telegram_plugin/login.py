@@ -47,6 +47,7 @@ from telethon.tl.types.auth import SentCodeTypeApp, SentCodeTypeCall, SentCodeTy
 from telegram_plugin.client import ensure_state_dir, session_lock
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import MissingCredentials, SessionLocked, describe
+from telegram_plugin.privacy import private_json, private_output, redact_text, redact_value
 from telegram_plugin.state import (
     open_private_file,
     prepare_session_file,
@@ -137,6 +138,7 @@ def status_payload(config: Config, *, authorized: Any, account: dict | None) -> 
     has_credentials = bool(config.api_id and config.api_hash)
     payload: dict[str, Any] = {
         "credentials": "present" if has_credentials else "missing",
+        "credential_source": config.credential_source if has_credentials else "missing",
         "session_file": "present" if config.session_path.exists() else "missing",
         "authorized": authorized,
         "state_dir": str(config.state_dir),
@@ -144,10 +146,7 @@ def status_payload(config: Config, *, authorized: Any, account: dict | None) -> 
     if account:
         payload["account"] = account
     if not has_credentials:
-        payload["hint"] = (
-            "TELEGRAM_API_ID and TELEGRAM_API_HASH are not set. Create an application at "
-            f"https://my.telegram.org and put both into {config.dotenv_path}"
-        )
+        payload["hint"] = str(MissingCredentials())
     elif authorized is False:
         payload["hint"] = f"not logged in — run {COMMAND} --browser"
     return payload
@@ -157,8 +156,11 @@ def write_status(config: Config, payload: dict) -> dict:
     """Stamped with time and writer: a poller must be able to tell a stale file, and a
     login whose process died, from one still in progress."""
     path = config.auth_status_path
-    stamped = {**payload, "pid": os.getpid(), "written": datetime.now(timezone.utc).isoformat()}
-    write_private_text(path, json.dumps(stamped, ensure_ascii=False, indent=2) + "\n")
+    stamped = redact_value(
+        {**payload, "pid": os.getpid(), "written": datetime.now(timezone.utc).isoformat()},
+        credentials=(config.api_id, config.api_hash),
+    )
+    write_private_text(path, private_json(stamped, ensure_ascii=False, indent=2) + "\n")
     return stamped
 
 
@@ -502,7 +504,7 @@ def _status_command(config: Config) -> int:
                 f"to {config.state_dir} and a connection to Telegram; inside an agent's "
                 "sandbox, rerun this command outside it."
             )
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(private_json(payload, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -586,7 +588,7 @@ def _wait_command(
             relevant = _after(written, started) or (followed is not None and pid == followed)
             if payload.get("state") in FINAL_STATES:
                 if relevant:
-                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    print(private_json(payload, ensure_ascii=False, indent=2))
                     if payload["state"] in {"authorized", "logged_out"}:
                         return 0
                     return 4 if payload["state"] == "needs_password" else 1
@@ -596,7 +598,7 @@ def _wait_command(
                 # A failing login lets go of the lock a moment before it writes why.
                 gone_since = time.monotonic()
             elif relevant and time.monotonic() - gone_since >= settle:
-                print(json.dumps({
+                print(private_json({
                     "state": "failed",
                     "abandoned": True,
                     "hint": (
@@ -606,7 +608,7 @@ def _wait_command(
                 }, indent=2))
                 return 1
         if time.monotonic() >= deadline:
-            print(json.dumps({
+            print(private_json({
                 "state": "timeout",
                 "last": payload,
                 "hint": (
@@ -673,7 +675,7 @@ def _complain(hint: str) -> None:
 
 def _say(text: str, stream: Any) -> None:
     try:
-        print(text, file=stream, flush=True)
+        print(redact_text(text), file=stream, flush=True)
     except OSError:
         pass  # the terminal is gone; the outcome is already in the status file
 
@@ -726,6 +728,7 @@ def _telethon_client(config: Config) -> Any:
     return TelegramClient(str(config.session_path), config.api_id, config.api_hash)
 
 
+@private_output
 def main(
     argv: list[str] | None = None,
     *,
@@ -741,7 +744,7 @@ def main(
         config = load_config_from_environment(environment)
     except (OSError, ValueError) as exc:
         if arguments.status:
-            print(json.dumps({"authorized": "unknown", "credentials": "unknown",
+            print(private_json({"authorized": "unknown", "credentials": "unknown",
                               "hint": f"Could not safely read configuration: {describe(exc)}. "
                               "Check state permissions and sandbox access."}))
             return 0

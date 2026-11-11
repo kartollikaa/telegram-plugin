@@ -12,16 +12,46 @@ can lead to restrictions on the application's API access, affecting legitimate
 users too. Telegram requires developers to register their own application;
 Telethon warns against publishing the API hash and says it cannot be revoked.
 
-The plugin therefore keeps its existing per-installation credential configuration.
-It does not bundle the author's personal credentials, borrow another client's
-credentials, or send account sessions through an authentication service. A shared
-application would require its owner's explicit acceptance of credential exposure
-and application-wide availability risk. A local program cannot conceal a shared
-hash from the person running it, including when packaged as a binary.
+Publisher distributions contain a shared application profile. The owner accepts
+credential exposure and application-wide availability risk. Personal credentials
+remain an optional complete-pair override for source development. The plugin does
+not borrow another client's credentials or send sessions through an authentication
+service. A local program cannot conceal a shared hash from the person running it,
+including when packaged as a binary. This is the same distribution constraint
+faced by native mobile and browser clients; it is not user-account authorization.
+
+The release builder takes the publisher pair from a private file and injects only
+the client profile into the archive. Publisher input, account sessions and local
+state are excluded even when accidentally tracked beneath a documentation or skill
+directory. File extension allowlists do not replace explicit secret/state exclusions.
+The generated profile is ignored by Git and must not be added
+to source or allowlisted as a harmless fixture. Source checkout installation does
+not have a shared profile; end users install a publisher distribution instead.
 
 References: [Telegram application registration](https://core.telegram.org/api/obtaining_api_id),
 [API terms](https://core.telegram.org/api/terms),
 [Telethon sign-in](https://docs.telethon.dev/en/stable/basic/signing-in.html).
+
+## Model-facing output boundary
+
+Commands provide account operations, not configuration inspection or arbitrary
+code execution. Credential values are excluded from configuration representations
+and redacted from structured results, exports, login output, status files, errors
+and library logging, including formatted exception text. Registration lasts for
+one CLI invocation, covers publisher and override credentials, and is restored
+after the invocation. Status reports credential presence/source only. No debug
+command may expose configuration or environment contents.
+API IDs are redacted as both integer values and text next to letters. Credential
+hashes are redacted before IDs so an overlapping ID cannot reveal pieces of a hash.
+Terminal text is redacted before trusted ANSI controls are added, preserving QR redraws.
+Credential overrides select one complete source: environment, otherwise the state `.env`,
+otherwise the publisher profile. A missing half must never come from another source.
+
+This boundary does not stop an agent with arbitrary filesystem or shell access
+from reading the distributed profile or importing the runtime. Do not claim that
+prompt instructions, encoding, compilation or redaction make those keys secret
+from such an agent. A strict guarantee would require a separate access boundary
+that holds credentials and enforces allowed operations independently of the agent.
 
 ## Session and filesystem boundary
 

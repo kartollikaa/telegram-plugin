@@ -491,7 +491,7 @@ def test_status_payload_says_when_credentials_are_missing(tmp_path):
     config = load_config({"TELEGRAM_STATE_DIR": str(tmp_path)})
     payload = status_payload(config, authorized=False, account=None)
     assert payload["credentials"] == "missing"
-    assert "my.telegram.org" in payload["hint"]
+    assert "publisher distribution" in payload["hint"]
 
 
 def test_status_payload_reports_the_account_when_authorised(tmp_path):

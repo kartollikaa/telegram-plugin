@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -14,6 +13,7 @@ from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import TelegramPluginError, describe
 from telegram_plugin.matching import normalize_dialog_text
 from telegram_plugin.paths import read_confined_text
+from telegram_plugin.privacy import private_json, private_output
 from telegram_plugin.render import DEFAULT_ITEMS, MAX_ITEMS
 
 if TYPE_CHECKING:
@@ -261,9 +261,10 @@ def _error(exc: Exception) -> dict:
 
 
 def _write_json(value: dict) -> None:
-    print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    print(private_json(value, ensure_ascii=False, separators=(",", ":")))
 
 
+@private_output
 def main(
     argv: Sequence[str] | None = None,
     *,

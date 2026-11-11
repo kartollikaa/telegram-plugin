@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from telegram_plugin.application_profile import load_application_profile
+from telegram_plugin.privacy import register_credentials
 from telegram_plugin.state import read_private_text
 
 DEPENDENCIES: tuple[str, ...] = ("telethon>=1.42,<2", "segno>=1.6,<2")
@@ -36,7 +38,7 @@ def parse_dotenv(text: str) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class Config:
-    api_id: int | None
+    api_id: int | None = field(repr=False)
     api_hash: str | None = field(repr=False)
     state_dir: Path
     session_name: str
@@ -47,8 +49,10 @@ class Config:
     lock_wait: float
     unreadable: tuple[str, ...] = field(default=())
     """Variables that were set but could not be read as a number, so a default stands in."""
+    credential_source: str = "override"
 
     def __post_init__(self) -> None:
+        register_credentials(self.api_id, self.api_hash)
         name = self.session_name
         if (not name or name in (".", "..") or any(c in name for c in "/\\")
                 or any(ord(c) < 32 or ord(c) == 127 for c in name)):
@@ -80,10 +84,14 @@ def load_config(env: Mapping[str, str], dotenv_text: str | None = None) -> Confi
     state_dir = Path(state_raw) if state_raw else home / DEFAULT_STATE_SUBPATH
     output_raw = value("TELEGRAM_OUTPUT_ROOT")
     unreadable: list[str] = []
+    credential_names = ("TELEGRAM_API_ID", "TELEGRAM_API_HASH")
+    credential_env = env if any(key in env for key in credential_names) else from_file
+    overridden = any(key in credential_env for key in credential_names)
+    application = None if overridden else load_application_profile()
 
     return Config(
-        api_id=_as_int(value("TELEGRAM_API_ID")),
-        api_hash=value("TELEGRAM_API_HASH"),
+        api_id=application.api_id if application else _as_int(credential_env.get("TELEGRAM_API_ID")),
+        api_hash=application.api_hash if application else credential_env.get("TELEGRAM_API_HASH"),
         state_dir=state_dir,
         session_name=value("TELEGRAM_SESSION_NAME") or DEFAULT_SESSION_NAME,
         allow_send=value("TELEGRAM_PLUGIN_ALLOW_SEND") == "1",
@@ -94,6 +102,7 @@ def load_config(env: Mapping[str, str], dotenv_text: str | None = None) -> Confi
         idle_timeout=_seconds("TELEGRAM_IDLE_TIMEOUT", value, DEFAULT_IDLE_TIMEOUT, unreadable),
         lock_wait=_seconds("TELEGRAM_LOCK_WAIT", value, DEFAULT_LOCK_WAIT, unreadable),
         unreadable=tuple(unreadable),
+        credential_source="application" if application else "override",
     )
 
 

@@ -141,7 +141,9 @@ way to pay that cost deliberately.
 
 ## Configuration and state
 
-Nothing secret lives in the repository; only `.env.example` does.
+Nothing secret lives in the repository; only `.env.example` does. Publisher archives
+inject a shared application profile without putting it in Git. End users approve
+their Telegram login; source developers can supply a personal credential pair.
 
 [Authentication and local trust](auth-security.md) defines the application credential
 policy and filesystem boundary. Local code running as the session owner can bypass
@@ -150,8 +152,8 @@ unowned state through descriptor checks before reading it or changing permission
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `TELEGRAM_API_ID` | from my.telegram.org | required |
-| `TELEGRAM_API_HASH` | from my.telegram.org | required |
+| `TELEGRAM_API_ID` | optional personal client id | bundled application profile |
+| `TELEGRAM_API_HASH` | optional personal client hash | bundled application profile |
 | `TELEGRAM_STATE_DIR` | session, `.env`, venv, downloads | `~/.local/state/telegram-plugin` |
 | `TELEGRAM_SESSION_NAME` | session file basename | `telegram` |
 | `TELEGRAM_OUTPUT_ROOT` | the only directory commands may write into | `$TELEGRAM_STATE_DIR/downloads` |
@@ -162,8 +164,10 @@ unowned state through descriptor checks before reading it or changing permission
 | `TELEGRAM_LOCK_WAIT` | seconds to wait for a session another process holds | 20 |
 
 Resolution order is **real environment first, then `$TELEGRAM_STATE_DIR/.env`,
-then defaults** — so a host that injects variables always wins over a file on
-disk. The state directory is created `0700` and the `.env` inside it `0600`.
+then the bundled application profile for credentials and defaults for other fields**.
+Any explicit credential override selects the whole override pair, including an
+incomplete or cleared one; credentials from different applications must never mix.
+The state directory is created `0700` and the `.env` inside it `0600`.
 
 A zero timeout is a deliberate opt-out and is honoured. A negative one is a typo,
 not an instruction, and falls back to the default: letting it through would

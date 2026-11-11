@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import errno
-import json
 import os
 from collections.abc import Iterable
 from pathlib import Path
 
 from telegram_plugin.errors import UnsafePath
+from telegram_plugin.privacy import private_json
 
 _EXCLUSIVE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
 _OVERWRITE = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -23,7 +23,7 @@ def write_jsonl(path: str | Path, rows: Iterable[dict], *, exclusive: bool = Tru
     last_id: int | None = None
     with handle:
         for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+            handle.write(private_json(row, ensure_ascii=False, separators=(",", ":")) + "\n")
             lines += 1
             row_id = row.get("id")
             if first_id is None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from telegram_plugin.privacy import redact_text
+
 LOGIN_HINT = "Session is not authorised — run bin/telegram-login --browser, then retry."
 
 
@@ -37,9 +39,9 @@ class MissingCredentials(TelegramPluginError):
 
     def __init__(self) -> None:
         super().__init__(
-            "TELEGRAM_API_ID and TELEGRAM_API_HASH are not set — get them from "
-            "https://my.telegram.org and put them in the state directory's .env "
-            "(see .env.example), or export them in the host's environment."
+            "No application credentials are available. Install the publisher distribution "
+            "with its application profile. For source development, configure TELEGRAM_API_ID "
+            "and TELEGRAM_API_HASH privately in the state directory's .env (see .env.example)."
         )
 
 
@@ -165,7 +167,7 @@ def _text(exc: BaseException) -> str:
     except Exception:  # noqa: BLE001
         # describe() is the last line before the model; it must never raise on its own.
         return "unprintable error"
-    return _without_home(text)
+    return redact_text(_without_home(text))
 
 
 def _without_home(text: str) -> str:
