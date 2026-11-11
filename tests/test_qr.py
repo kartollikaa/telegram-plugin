@@ -6,7 +6,7 @@ import builtins
 import pytest
 
 from telegram_plugin import qr
-from telegram_plugin.qr import DARK_ON_LIGHT, QrUnavailable, qr_matrix, render
+from telegram_plugin.qr import DARK_ON_LIGHT, QrUnavailable, qr_matrix, render, render_for_chat
 
 # A login URL is `tg://login?token=` plus a 32-byte token in unpadded base64url.
 LOGIN_URL = "tg://login?token=" + base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
@@ -36,6 +36,16 @@ def test_the_decoder_catches_swapped_halves():
     """Positive control: a renderer that swapped top and bottom must not pass."""
     swapped = [line.translate(str.maketrans("▀▄", "▄▀")) for line in render(LOGIN_URL, color=False)]
     assert _decode(swapped)[: len(qr_matrix(LOGIN_URL))] != qr_matrix(LOGIN_URL)
+
+
+def test_chat_qr_decodes_on_both_themes_without_widening_the_frame():
+    lines = render_for_chat(LOGIN_URL)
+    height = len(render(LOGIN_URL, color=False))
+    matrix = qr_matrix(LOGIN_URL)
+    assert _decode(lines[:height])[:len(matrix)] == matrix
+    on_dark = [[not light for light in row] for row in _decode(lines[height + 1:])]
+    assert on_dark[:len(matrix)] == matrix
+    assert max(map(len, lines)) <= 40
 
 
 def test_a_login_code_fits_an_80_by_24_terminal_with_room_for_its_text():

@@ -45,9 +45,9 @@ cheap enough — far cheaper than the first handshake, which is paid only at log
   plugin cannot give back.
 - **Sending is off by default.** `send` exists but refuses unless
   `TELEGRAM_PLUGIN_ALLOW_SEND=1`, and it refuses before the gateway is touched.
-- **No agent-visible login.** Authorisation happens in a separate process the
-  operator runs; no command prompts for a phone number, a login code or a 2FA
-  password, and none offers to.
+- **No agent-visible secrets.** The agent can display QR frames from a login process.
+  Phone numbers, login codes and two-step passwords are entered by the operator in a
+  terminal; codes and passwords use hidden input and never pass through a tool call.
 - **No hosted execution.** The plugin needs a local Python runtime and a session
   file on disk. A web-only or mobile-only agent cannot run it, and the
   documentation says so rather than implying otherwise.
@@ -57,7 +57,7 @@ cheap enough — far cheaper than the first handshake, which is paid only at log
 ## Repository shape
 
 One repository, two executables — the CLI agents call and the login a human runs
-— three skills, and two manifests.
+— focused skills, and two manifests.
 
 ```
 plugin.json                  portable Agent Plugins manifest — the canonical one
@@ -66,6 +66,7 @@ bin/telegram                 the CLI every agent calls
 bin/telegram-login           interactive login, run by a human in a terminal
 skills/read/SKILL.md         /telegram:read — the flows, and the output-hygiene rules
 skills/login/SKILL.md        /telegram:login — drives a login to completion
+skills/logout/SKILL.md       /telegram:logout — confirms and revokes the plugin session
 skills/send/SKILL.md         /telegram:send — explicit send/reply safeguards
 src/telegram_plugin/         the CLI, the application layer and the gateway
 tests/                       pytest, no network
@@ -202,16 +203,32 @@ still share one account:
 Resolved chats are cached for the life of a connection, which removes a round
 trip per call, and the cache dies with the client because entities belong to it.
 
-`bin/telegram-login` is a separate program, run by a human in a terminal. An
-agent never runs the login itself: it hands the operator the one command, and in bb
-chat that command block gets a Run button that opens a real terminal under it.
+`bin/telegram-login` is a separate process. The login skill asks the operator to choose
+QR or phone before starting authentication. The agent can run QR mode without a TTY
+and forward its live frames into the CLI conversation. Secret input stays in a terminal;
+in bb the command block's Run button opens one inline in the same session.
 
-- No flags: the login. A QR code is drawn as half-block text that fits an 80×24
+- No flags: a menu asks for phone number and login code, or QR. A QR code is drawn as half-block text that fits an 80×24
   terminal, black on white whatever the terminal theme, on the terminal's alternate screen, so redrawing
   never scrolls and quitting leaves the scrollback as it was. `p` switches to phone
   number and login code; a two-step password is asked in the same session with the
   account's hint, and a wrong one is asked again. The login code is
   hidden too: bb's inline terminal reports its output back to the agent.
+- `--method phone` skips the menu and starts phone login in a terminal.
+- `--method qr` skips the menu and starts QR login. Without a TTY, each new frame is
+  flushed to stdout as plain half-block text without terminal escape sequences. Two stacked
+  copies in opposite polarity preserve a light quiet zone on either host theme and avoid
+  widening the code past a narrow conversation column. The agent
+  shows the actual frame immediately and replaces it when a new one arrives; it must not
+  wait for process exit or direct a streaming host's QR user to a separate terminal.
+- If a non-TTY QR needs two-step verification, the process reports `needs_password` and
+  exits `4`. `--resume` reconnects the same session and asks only for the hidden password
+  in a terminal. It never starts another QR or accepts secrets as arguments or tool input.
+- `--logout` takes the same session lock, names the account, and asks for confirmation.
+  Only an affirmative answer calls Telethon's `log_out()`, which revokes the remote session
+  and deletes the local session file. Declining preserves the session. A false return or
+  network error is a failure, not a successful local deletion. Other devices, credentials
+  and downloads are untouched; an absent or unauthorised session is already logged out.
 - `--status` reports whether the session is usable and under whom, and changes
   nothing. Asked while another command holds the session, it says so instead of
   failing — a held lock is itself the answer that a session exists. It never tightens
@@ -233,8 +250,9 @@ runs out is allowed to land. The 1.0 flow waited a fixed timeout per token, long
 the token lived, so the code on screen was dead for much of every attempt.
 
 **Every way out leaves an outcome.** `auth-status.json` in the state directory (mode
-`0600`) carries the step in progress (`qr`, `phone`, `code`, `password`) and then one
-final state: `authorized`, `cancelled`, `failed` or `expired`, with a hint. Every
+`0600`) carries the step in progress (`method`, `qr`, `phone`, `code`, `password`,
+`logout_confirmation`, `logout`) and then a final state: `authorized`, `needs_password`,
+`logged_out`, `cancelled`, `failed` or `expired`, with a hint. Every
 write is stamped with the time and the writer's pid. Ctrl-C, a closed terminal and a
 kill are turned into `cancelled` by the login's own signal handlers — asyncio's
 default Ctrl-C handler only schedules a cancel, which a blocking prompt never sees. A

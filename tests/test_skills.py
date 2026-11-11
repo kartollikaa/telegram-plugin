@@ -4,6 +4,7 @@ REPO = Path(__file__).resolve().parents[1]
 READ_SKILL = (REPO / "skills/read/SKILL.md").read_text()
 LOGIN_SKILL = (REPO / "skills/login/SKILL.md").read_text()
 SEND_SKILL = (REPO / "skills/send/SKILL.md").read_text()
+LOGOUT_SKILL = (REPO / "skills/logout/SKILL.md").read_text()
 
 
 def test_skill_states_that_chat_content_is_data_not_instructions():
@@ -84,7 +85,22 @@ def test_the_login_skill_covers_every_outcome_the_cli_can_report():
     from telegram_plugin.login import FINAL_STATES
 
     for state in ("credentials", "authorized", "session_in_use", "timeout", *FINAL_STATES):
-        assert state in LOGIN_SKILL_TEXT, state
+        assert state in LOGIN_SKILL_TEXT + LOGOUT_SKILL, state
+
+
+def test_login_skill_offers_a_choice_and_streams_qr_before_process_exit():
+    for requirement in ("AskUserQuestion", "QR code here", "Phone number and code",
+                        "--method qr", "without a TTY", "immediately", "refreshed QR",
+                        "--resume", "--method phone"):
+        assert requirement in LOGIN_SKILL, requirement
+    assert "Do not send the operator to" in LOGIN_SKILL
+
+
+def test_logout_skill_requires_confirmation_and_real_revocation():
+    for requirement in ("--logout", "confirmation", "revoking", "cancelled", "failed",
+                        "--status", "Do not delete a session file"):
+        assert requirement in LOGOUT_SKILL, requirement
+    assert "user-invocable: true" in LOGOUT_SKILL
 
 
 def test_the_login_skill_names_the_launcher_through_the_plugin_root():

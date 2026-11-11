@@ -43,3 +43,10 @@ def render(text: str, *, quiet_zone: int = QUIET_ZONE, color: bool = True) -> li
         cells = "".join(_CELL[pair] for pair in zip(top, bottom))
         lines.append(f"{DARK_ON_LIGHT}{cells}{RESET}" if color else cells)
     return lines
+
+
+def render_for_chat(text: str) -> list[str]:
+    """Opposite polarities keep a light quiet zone on either chat theme."""
+    lines = render(text, color=False)
+    inverse = str.maketrans("█▀▄ ", " ▄▀█")
+    return [*lines, "", *(line.translate(inverse) for line in lines)]
