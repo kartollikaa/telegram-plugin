@@ -88,7 +88,6 @@ FORBIDDEN_SIDE_EFFECTS = (
     r"\bmark_read\b",
     r"\bMarkDialogUnreadRequest\b",
     r"\bReadHistoryRequest\b",
-    r"\bsend_file\b",
 )
 
 # A denylist only ever catches a spelling it already knows, and Telethon offers
@@ -119,7 +118,7 @@ EXPECTED_COMMANDS: dict[str, tuple[list[str], list[str]]] = {
     ),
     "search": (["--chat", "--limit", "--max-id", "--out", "--out-limit"], ["query"]),
     "download": (["--dest-dir"], ["chat", "message_id"]),
-    "send": (["--reply-to", "--text", "--text-file"], ["chat"]),
+    "send": (["--caption", "--caption-file", "--document", "--photo", "--reply-to", "--text", "--text-file"], ["chat"]),
 }
 
 # Every Telethon method the agent-facing gateway may call, and every raw request
@@ -137,6 +136,7 @@ ALLOWED_GATEWAY_CALLS = frozenset(
         "iter_dialogs",
         "iter_messages",
         "send_message",
+        "send_file",
     }
 )
 ALLOWED_RAW_REQUESTS = frozenset({"CheckChatInviteRequest"})

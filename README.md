@@ -242,6 +242,36 @@ operation and prints one JSON object.
 (a regular, non-symlink file under the output root) — the two are mutually exclusive.
 Add `--reply-to MESSAGE_ID` to answer a specific message rather than posting a new one.
 
+Send one local image as a photo with `send CHAT --photo RELATIVE_PATH`, or send any
+attachment (including an image without photo conversion) with
+`send CHAT --document RELATIVE_PATH`. Photo inputs use `.jpg`, `.jpeg` or `.png`.
+All input files must be regular, non-symlink files under `TELEGRAM_OUTPUT_ROOT`;
+stage an operator-approved file there before sending it. Absolute paths inside that
+root also work. URLs, directories, symlinks and paths escaping the root are refused.
+An upload holds the opened file descriptor throughout the operation instead of
+reopening its path. The original filename is preserved for documents.
+
+Media accepts `--caption TEXT` or `--caption-file RELATIVE_PATH` (UTF-8, under the
+same root), and `--reply-to MESSAGE_ID`. Captions are literal plain text. Caption
+flags cannot accompany text-only sends. Choose exactly one source: `--text`,
+`--text-file`, `--photo` or `--document`. Each invocation sends one message.
+
+On Claude, invoke the plugin launcher; on Codex, use its installed absolute path:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/telegram" send @recipient --photo generated.png --caption "Preview"
+"${CLAUDE_PLUGIN_ROOT}/bin/telegram" send @recipient --document report.pdf --caption-file caption.txt --reply-to 123
+```
+
+The send permission and exact recipient rules apply to attachments too. Successful
+media output includes confirmed `message_id`, `chat_id`, `chat_title`, `reply_to`
+and `media_type` (`photo` or `document`, taken from Telegram's response). No local
+path or caption is echoed. Runtime failures use the JSON error contract; invalid
+CLI syntax uses exit 2 and argparse diagnostics. The client disables automatic RPC
+retries and flood-wait sleeping. An interrupted or failed upload does not confirm
+message delivery: inspect the chat before any operator-authorized retry.
+
+
 `read` accepts `--min-id`, `--max-id`, `--since`, `--until`, `--from-user` and
 `--media-only`; `thread` accepts `--min-id` to continue past its first page; `search` inside one chat pages backwards on `--max-id`, because results arrive
 newest first. A search **across all chats has no id cursor at all** — ids are only
@@ -298,6 +328,7 @@ prose. The complete set:
 | `unsafe_path` | a read or write path escaped the output root |
 | `invalid_timestamp` | `--since` or `--until` was not ISO 8601 |
 | `send_disabled` | sending is off; nothing was sent |
+| `invalid_send_arguments` | captions without media, or unsupported photo filename |
 | `empty_text` | the message body was empty or whitespace |
 | `flood_wait` | Telegram asked for a wait; the message carries the seconds |
 | `telegram_error` | a plugin error with no more specific code |

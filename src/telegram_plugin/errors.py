@@ -143,9 +143,16 @@ class UnsafeInputPath(TelegramPluginError):
 
     def __init__(self, candidate: str, root: str) -> None:
         super().__init__(
-            f"Refusing to read {candidate}: the text file must be a regular non-symlink file "
+            f"Refusing to read {candidate}: the input file must be a regular non-symlink file "
             f"inside the configured output directory {root}."
         )
+
+
+class InvalidSendArguments(TelegramPluginError):
+    code = "invalid_send_arguments"
+
+    def __init__(self) -> None:
+        super().__init__("Captions require --photo or --document; photo files must use .jpg, .jpeg or .png.")
 
 
 def describe(exc: BaseException) -> str:

@@ -340,7 +340,7 @@ def test_send_text_sources_are_mutually_exclusive(capsys, tmp_path, argv):
 
     assert code == 2
     assert captured.out == ""
-    assert "one of the arguments --text --text-file is required" in captured.err or (
+    assert "one of the arguments --text --text-file --photo --document is required" in captured.err or (
         "not allowed with argument" in captured.err
     )
     assert gateway.sent == []
@@ -446,7 +446,7 @@ def test_send_text_source_validation(capsys, tmp_path):
     code, captured, _ = _invoke(capsys, tmp_path, ["send", "@alpha"], neither, allow_send)
     assert code == 2
     assert captured.out == ""
-    assert "one of the arguments --text --text-file is required" in captured.err
+    assert "one of the arguments --text --text-file --photo --document is required" in captured.err
     assert neither.sent == []
 
     empty = FakeGateway()
