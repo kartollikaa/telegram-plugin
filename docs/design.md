@@ -222,6 +222,8 @@ session deadline still bounds it. Cancellation and deadlines monitor pending net
 calls too, not only prompts. Each page receives its own invocation's outcome, captured
 before releasing the session lock; it must never infer that result from a shared status
 file after unlocking. Only the human may access the live form.
+Unauthorised-command errors and post-login logout hints also name the browser-capable
+entrypoints, so a runtime hint cannot send the operator back to manual terminal input.
 
 - No flags: the terminal menu offers phone or QR; `--browser` puts that menu in the form.
 - `--method phone` skips the menu. With `--browser`, all input stays in the form;

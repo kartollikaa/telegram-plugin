@@ -156,7 +156,10 @@ class BrowserUi:
                 if route == "":
                     self._send(PAGE.replace("NONCE", ui._nonce), html=True)
                 elif route == "state":
-                    self._send(ui._state())
+                    state = ui._state()
+                    self._send(state)
+                    if state["result"] is not None:
+                        ui._seen.set()
                 else:
                     self._send({}, 404)
 
@@ -220,8 +223,6 @@ class BrowserUi:
 
     def _state(self) -> dict:
         with self._condition:
-            if self._result is not None:
-                self._seen.set()
             return {"messages": list(self._messages), "prompt": self._prompt,
                     "matrix": self._matrix, "csrf": self._csrf, "result": self._result}
 

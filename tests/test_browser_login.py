@@ -251,6 +251,9 @@ def test_cli_complete_workflow_through_real_loopback_form(
                     deadline = time.monotonic() + 2
                     while time.monotonic() < deadline:
                         current = json.loads(request(url + "state")[0])
+                        if current["result"]:
+                            results.append(current)
+                            return
                         if current["prompt"] != state["prompt"]:
                             break
                         time.sleep(0.01)
@@ -364,3 +367,21 @@ async def test_form_stop_cancels_pending_network_call_and_disconnects(page, tmp_
     with pytest.raises(EOFError):
         await asyncio.wait_for(task, timeout=0.5)
     assert client.disconnected
+
+
+def test_final_result_is_acknowledged_only_after_response_is_sent(page, monkeypatch):
+    ui, url = page
+    ui._result = "Finished"
+    handler = ui._server.RequestHandlerClass
+    send = handler._send
+    seen_before_send = []
+
+    def capture(self, value, *args, **kwargs):
+        if isinstance(value, dict) and value.get("result"):
+            seen_before_send.append(ui._seen.is_set())
+        return send(self, value, *args, **kwargs)
+
+    monkeypatch.setattr(handler, "_send", capture)
+    assert json.loads(request(url + "state")[0])["result"] == "Finished"
+    assert seen_before_send == [False]
+    assert ui._seen.wait(1)

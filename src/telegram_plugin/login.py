@@ -686,7 +686,7 @@ def _finished(result: dict) -> int:
         lead = "Already logged in" if result.get("already") else "✓ Logged in"
         _say(f"{lead} as {account['name']} (id {account['id']}). Telegram is ready to use.",
              sys.stdout)
-        _say(f"To log out, run {COMMAND} --logout.", sys.stdout)
+        _say(f"To log out, use /telegram:logout or run {COMMAND} --browser --logout.", sys.stdout)
         return 0
     _complain(result["hint"])
     return 1

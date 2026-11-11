@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-LOGIN_HINT = "Session is not authorised — run bin/telegram-login in a terminal, then retry."
+LOGIN_HINT = "Session is not authorised — run bin/telegram-login --browser, then retry."
 
 
 class TelegramPluginError(Exception):
