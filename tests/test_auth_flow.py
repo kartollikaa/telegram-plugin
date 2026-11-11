@@ -442,7 +442,7 @@ def test_status_answers_where_the_state_directory_cannot_be_written(tmp_path, mo
     assert main(["--status", "--state-dir", str(tmp_path)]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["authorized"] == "unknown"
-    assert payload["credentials"] == "present"
+    assert payload["credentials"] == "unknown"
     assert "sandbox" in payload["hint"]
 
 
@@ -491,7 +491,7 @@ def test_status_payload_says_when_credentials_are_missing(tmp_path):
     config = load_config({"TELEGRAM_STATE_DIR": str(tmp_path)})
     payload = status_payload(config, authorized=False, account=None)
     assert payload["credentials"] == "missing"
-    assert "my.telegram.org" in payload["hint"]
+    assert "publisher distribution" in payload["hint"]
 
 
 def test_status_payload_reports_the_account_when_authorised(tmp_path):

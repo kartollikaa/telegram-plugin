@@ -46,7 +46,7 @@ def test_the_two_factor_password_is_read_without_echo():
 def test_missing_credentials_are_explained_rather_than_traced(tmp_path):
     result = _run([], tmp_path)
     assert result.returncode == 2
-    assert "my.telegram.org" in result.stderr
+    assert "publisher distribution" in result.stderr
     assert "Traceback" not in result.stderr
 
 
@@ -110,7 +110,7 @@ def test_the_login_waits_for_a_session_the_server_is_about_to_release(tmp_path):
         # 2 is "no credentials" — reached only by getting past the lock.
         # 1 would mean it refused because the session was busy.
         assert finished.returncode == 2, finished.stderr
-        assert "my.telegram.org" in finished.stderr
+        assert "publisher distribution" in finished.stderr
     finally:
         holder.join(10)
 
@@ -126,7 +126,7 @@ def test_missing_credentials_reach_the_status_file_not_only_stderr(tmp_path):
     assert result.returncode == 2
     payload = _status_file(tmp_path)
     assert payload["state"] == "failed"
-    assert "my.telegram.org" in payload["hint"]
+    assert "publisher distribution" in payload["hint"]
     assert "written" in payload
 
 

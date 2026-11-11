@@ -20,6 +20,17 @@ command, and none is planned — see [Limits](#limits).
 
 ## Install
 
+Use the publisher's `telegram-plugin.tar.gz` distribution for login without API
+configuration. It includes the application's client profile:
+
+```bash
+tar -xzf telegram-plugin.tar.gz
+cd telegram-plugin
+./scripts/setup.sh
+```
+
+For source development instead:
+
 ```bash
 git clone https://github.com/kartollikaa/telegram-plugin.git
 cd telegram-plugin
@@ -85,7 +96,13 @@ already has both if you would rather share one.
 
 ## Credentials
 
-Create an application at https://my.telegram.org to get an API id and hash. Copy
+Publisher distributions include a shared application profile. Users only approve
+their own Telegram login with QR or phone/code and optional two-step password.
+No API id or hash is requested from them. See [authentication and local trust](docs/auth-security.md)
+for the distribution tradeoff, output redaction and the limits of the send flag.
+
+Source checkouts and optional personal overrides use an application created at
+https://my.telegram.org. Copy
 [`.env.example`](.env.example) to the state directory as `.env` and fill both in:
 
 ```bash
@@ -95,6 +112,15 @@ cp .env.example ~/.local/state/telegram-plugin/.env
 
 Anything exported in the host's environment wins over that file. Nothing secret
 belongs in this repository or anywhere near your checkout.
+Overrides replace the entire credential pair; a partial or empty override never
+mixes a personal id with the publisher's hash. A source checkout without credentials
+reports a missing publisher profile rather than asking an end user to create an app.
+
+Publishers prepare the archive with `python3 scripts/build-release.py --credentials-file
+/private/publisher/.env --output /private/output/telegram-plugin.tar.gz` after
+setting `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in that private file. The builder
+injects the profile into the archive, keeps it out of Git, and never prints values.
+An archive contains extractable client credentials and must be distributed deliberately.
 
 ## Log in
 
@@ -149,7 +175,8 @@ Manual commands, if you choose to run the launcher yourself:
 ./bin/telegram-login --wait
 ```
 
-`--status` prints JSON and changes nothing. It answers while another command holds
+`--status` prints JSON without starting login or logout. Checking an existing
+session can create a lock and tighten session-file permissions. It answers while another command holds
 the session, saying it is in use, and inside an agent's sandbox, where the state
 directory cannot be written, it says `"authorized": "unknown"` and why instead of
 failing.

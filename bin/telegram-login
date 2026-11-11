@@ -1,6 +1,7 @@
 #!/bin/sh
 # The login. Talks to a human, so stdout stays as it is.
 set -e
+umask 077
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 STATE=${TELEGRAM_STATE_DIR:-"$HOME/.local/state/telegram-plugin"}
 VENV="$STATE/venv"
@@ -19,12 +20,15 @@ fi
 if [ "$needs_runtime" = 1 ] && ! "$ROOT/bin/telegram" --help >/dev/null; then
     # An agent waiting on the status file must see this failure too.
     HINT="the plugin runtime could not be installed; the reason is in the terminal above"
-    STATUS="$STATE/auth-status.json"
-    {
-        printf '{"state": "failed", "hint": "%s", "pid": %s, "written": "%s"}\n' \
-            "$HINT" "$$" "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" >"$STATUS" &&
-            chmod 600 "$STATUS"
-    } 2>/dev/null || true
+    PYTHONPATH="$ROOT/src" python3 -S -c '
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+from telegram_plugin.state import write_private_text
+payload = {"state": "failed", "hint": sys.argv[2], "pid": int(sys.argv[3]),
+           "written": datetime.now(timezone.utc).isoformat()}
+write_private_text(Path(sys.argv[1]) / "auth-status.json", json.dumps(payload) + "\n")
+' "$STATE" "$HINT" "$$" 2>/dev/null || true
     echo "✗ The plugin runtime could not be installed (see above). Nothing was logged in." >&2
     exit 1
 fi

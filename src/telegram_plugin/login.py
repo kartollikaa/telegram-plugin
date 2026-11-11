@@ -47,6 +47,14 @@ from telethon.tl.types.auth import SentCodeTypeApp, SentCodeTypeCall, SentCodeTy
 from telegram_plugin.client import ensure_state_dir, session_lock
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import MissingCredentials, SessionLocked, describe
+from telegram_plugin.privacy import private_json, private_output, redact_text, redact_value
+from telegram_plugin.state import (
+    open_private_file,
+    prepare_session_file,
+    read_private_text,
+    tighten_private_file,
+    write_private_text,
+)
 
 FINAL_STATES = frozenset({
     "authorized", "logged_out", "needs_password", "cancelled", "failed", "expired",
@@ -130,6 +138,7 @@ def status_payload(config: Config, *, authorized: Any, account: dict | None) -> 
     has_credentials = bool(config.api_id and config.api_hash)
     payload: dict[str, Any] = {
         "credentials": "present" if has_credentials else "missing",
+        "credential_source": config.credential_source if has_credentials else "missing",
         "session_file": "present" if config.session_path.exists() else "missing",
         "authorized": authorized,
         "state_dir": str(config.state_dir),
@@ -137,10 +146,7 @@ def status_payload(config: Config, *, authorized: Any, account: dict | None) -> 
     if account:
         payload["account"] = account
     if not has_credentials:
-        payload["hint"] = (
-            "TELEGRAM_API_ID and TELEGRAM_API_HASH are not set. Create an application at "
-            f"https://my.telegram.org and put both into {config.dotenv_path}"
-        )
+        payload["hint"] = str(MissingCredentials())
     elif authorized is False:
         payload["hint"] = f"not logged in — run {COMMAND} --browser"
     return payload
@@ -150,10 +156,11 @@ def write_status(config: Config, payload: dict) -> dict:
     """Stamped with time and writer: a poller must be able to tell a stale file, and a
     login whose process died, from one still in progress."""
     path = config.auth_status_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    stamped = {**payload, "pid": os.getpid(), "written": datetime.now(timezone.utc).isoformat()}
-    path.write_text(json.dumps(stamped, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    path.chmod(0o600)
+    stamped = redact_value(
+        {**payload, "pid": os.getpid(), "written": datetime.now(timezone.utc).isoformat()},
+        credentials=(config.api_id, config.api_hash),
+    )
+    write_private_text(path, private_json(stamped, ensure_ascii=False, indent=2) + "\n")
     return stamped
 
 
@@ -453,12 +460,12 @@ async def _describe_me(client: Any) -> dict:
 
 
 def _tighten(path: Path) -> None:
-    if path.exists():
-        path.chmod(0o600)
+    tighten_private_file(path)
 
 
 async def _report_status(config: Config) -> dict:
     # Quick to give up: a status that retries for a minute is a worse answer than "unknown".
+    prepare_session_file(config.session_path)
     client = TelegramClient(
         str(config.session_path), config.api_id, config.api_hash,
         connection_retries=1, retry_delay=0, timeout=10,
@@ -497,13 +504,13 @@ def _status_command(config: Config) -> int:
                 f"to {config.state_dir} and a connection to Telegram; inside an agent's "
                 "sandbox, rerun this command outside it."
             )
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(private_json(payload, ensure_ascii=False, indent=2))
     return 0
 
 
 def _read_status(config: Config) -> dict | None:
     try:
-        payload = json.loads(config.auth_status_path.read_text(encoding="utf-8"))
+        payload = json.loads(read_private_text(config.auth_status_path))
     except (OSError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
@@ -540,7 +547,7 @@ def _session_held(config: Config) -> bool | None:
     """Whether some process holds the session lock, as a login does from its first status
     write to its last. Read-only, so it works in a sandbox; None when it cannot tell."""
     try:
-        descriptor = os.open(f"{config.session_path}.lock", os.O_RDONLY)
+        descriptor = open_private_file(Path(f"{config.session_path}.lock"), tighten=False)
     except FileNotFoundError:
         return False
     except OSError:
@@ -581,7 +588,7 @@ def _wait_command(
             relevant = _after(written, started) or (followed is not None and pid == followed)
             if payload.get("state") in FINAL_STATES:
                 if relevant:
-                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    print(private_json(payload, ensure_ascii=False, indent=2))
                     if payload["state"] in {"authorized", "logged_out"}:
                         return 0
                     return 4 if payload["state"] == "needs_password" else 1
@@ -591,7 +598,7 @@ def _wait_command(
                 # A failing login lets go of the lock a moment before it writes why.
                 gone_since = time.monotonic()
             elif relevant and time.monotonic() - gone_since >= settle:
-                print(json.dumps({
+                print(private_json({
                     "state": "failed",
                     "abandoned": True,
                     "hint": (
@@ -601,7 +608,7 @@ def _wait_command(
                 }, indent=2))
                 return 1
         if time.monotonic() >= deadline:
-            print(json.dumps({
+            print(private_json({
                 "state": "timeout",
                 "last": payload,
                 "hint": (
@@ -668,7 +675,7 @@ def _complain(hint: str) -> None:
 
 def _say(text: str, stream: Any) -> None:
     try:
-        print(text, file=stream, flush=True)
+        print(redact_text(text), file=stream, flush=True)
     except OSError:
         pass  # the terminal is gone; the outcome is already in the status file
 
@@ -717,9 +724,11 @@ def _interrupts() -> Iterator[None]:
 
 
 def _telethon_client(config: Config) -> Any:
+    prepare_session_file(config.session_path)
     return TelegramClient(str(config.session_path), config.api_id, config.api_hash)
 
 
+@private_output
 def main(
     argv: list[str] | None = None,
     *,
@@ -731,7 +740,16 @@ def main(
     environment = dict(os.environ)
     if arguments.state_dir:
         environment["TELEGRAM_STATE_DIR"] = arguments.state_dir
-    config = load_config_from_environment(environment)
+    try:
+        config = load_config_from_environment(environment)
+    except (OSError, ValueError) as exc:
+        if arguments.status:
+            print(private_json({"authorized": "unknown", "credentials": "unknown",
+                              "hint": f"Could not safely read configuration: {describe(exc)}. "
+                              "Check state permissions and sandbox access."}))
+            return 0
+        _complain(describe(exc))
+        return 1
 
     if arguments.status:
         return _status_command(config)

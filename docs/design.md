@@ -45,7 +45,7 @@ cheap enough — far cheaper than the first handshake, which is paid only at log
   plugin cannot give back.
 - **Sending is off by default.** `send` exists but refuses unless
   `TELEGRAM_PLUGIN_ALLOW_SEND=1`, and it refuses before the gateway is touched.
-- **No agent-visible secrets.** The agent can display QR frames from a login process.
+- **Private credential input.** The agent can display QR frames from a login process.
   Phone numbers, login codes and two-step passwords are entered by the operator in a
   private local form or human-owned terminal. Codes and passwords are masked and never
   pass through a tool call. Agents never inspect the form, its DOM, or its requests.
@@ -141,12 +141,19 @@ way to pay that cost deliberately.
 
 ## Configuration and state
 
-Nothing secret lives in the repository; only `.env.example` does.
+Nothing secret lives in the repository; only `.env.example` does. Publisher archives
+inject a shared application profile without putting it in Git. End users approve
+their Telegram login; source developers can supply a personal credential pair.
+
+[Authentication and local trust](auth-security.md) defines the application credential
+policy and filesystem boundary. Local code running as the session owner can bypass
+the CLI's send flag; private input is not a sandbox for that code. Reject linked or
+unowned state through descriptor checks before reading it or changing permissions.
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `TELEGRAM_API_ID` | from my.telegram.org | required |
-| `TELEGRAM_API_HASH` | from my.telegram.org | required |
+| `TELEGRAM_API_ID` | optional personal client id | bundled application profile |
+| `TELEGRAM_API_HASH` | optional personal client hash | bundled application profile |
 | `TELEGRAM_STATE_DIR` | session, `.env`, venv, downloads | `~/.local/state/telegram-plugin` |
 | `TELEGRAM_SESSION_NAME` | session file basename | `telegram` |
 | `TELEGRAM_OUTPUT_ROOT` | the only directory commands may write into | `$TELEGRAM_STATE_DIR/downloads` |
@@ -157,8 +164,10 @@ Nothing secret lives in the repository; only `.env.example` does.
 | `TELEGRAM_LOCK_WAIT` | seconds to wait for a session another process holds | 20 |
 
 Resolution order is **real environment first, then `$TELEGRAM_STATE_DIR/.env`,
-then defaults** — so a host that injects variables always wins over a file on
-disk. The state directory is created `0700` and the `.env` inside it `0600`.
+then the bundled application profile for credentials and defaults for other fields**.
+Any explicit credential override selects the whole override pair, including an
+incomplete or cleared one; credentials from different applications must never mix.
+The state directory is created `0700` and the `.env` inside it `0600`.
 
 A zero timeout is a deliberate opt-out and is honoured. A negative one is a typo,
 not an instruction, and falls back to the default: letting it through would

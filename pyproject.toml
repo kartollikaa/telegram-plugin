@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telegram-plugin"
-version = "2.2.0"
+version = "2.3.0"
 description = "Command-line access to one personal Telegram account for reading, searching and downloading"
 readme = "README.md"
 license = { text = "MIT" }
@@ -21,6 +21,9 @@ Homepage = "https://github.com/kartollikaa/telegram-plugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+telegram_plugin = ["_application.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

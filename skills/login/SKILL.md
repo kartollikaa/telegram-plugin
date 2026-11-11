@@ -25,17 +25,22 @@ mechanism. Do not claim a form opened when the launcher reports failure.
 "${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --status
 ```
 
-- `credentials: missing`: configure the API id and hash privately as in step 2.
+- `credentials: missing`: follow step 2; do not ask an end user for API credentials.
 - `authorized: true`: report `account.name` and `account.id`. Mention `/telegram:logout`
   for disconnecting or switching accounts; never log out automatically.
 - `session_in_use: true`: let that process finish; do not compete for the session.
 - `authorized: false`: continue to step 3.
 - `authorized: unknown`: relay the hint and resolve sandbox or connection access first.
 
-## 2. Configure API credentials privately
+## 2. Missing application profile
 
-The API id and hash come from https://my.telegram.org. Do not ask the operator to paste
-these into chat. They belong in `.env` under `state_dir`, using `.env.example` as a template:
+Publisher distributions contain a shared application profile. An end user only needs
+their Telegram login; if the profile is missing, ask them to install the publisher's
+distribution. Do not ask them to register an application or supply an API id/hash.
+
+Only an operator explicitly developing from source or choosing personal credentials
+configures the API id/hash from https://my.telegram.org privately. They belong in `.env`
+under `state_dir`, using `.env.example` as a template:
 
 ```text
 TELEGRAM_API_ID=
@@ -44,6 +49,9 @@ TELEGRAM_API_HASH=
 
 Repeat step 1 afterwards. Values from `.env` are never printed back. Never read that file
 with a tool; the operator's shell does not have that variable `${CLAUDE_PLUGIN_ROOT}`.
+Never inspect the bundled `_application.json`, dump the process environment, or import
+configuration to reveal keys. Commands, status, exports and diagnostics redact the
+configured application credentials; these controls do not restrict arbitrary shell code.
 
 ## 3. Choose and start
 

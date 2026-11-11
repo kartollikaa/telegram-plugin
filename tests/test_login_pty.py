@@ -32,7 +32,8 @@ class Operator:
         environment = {**os.environ, "PYTHONPATH": f"{REPO / 'src'}:{REPO}"}
         for leaked in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_STATE_DIR"):
             environment.pop(leaked, None)
-        environment.update(TELEGRAM_API_ID="1", TELEGRAM_API_HASH="h", TERM="xterm-256color")
+        environment.update(TELEGRAM_API_ID="81234567", TELEGRAM_API_HASH="ab" * 16,
+                           TERM="xterm-256color")
         self.process = subprocess.Popen(
             [sys.executable, "-m", "tests.login_pty_child", str(tmp_path), scenario],
             stdin=slave, stdout=slave, stderr=slave, cwd=REPO, env=environment,

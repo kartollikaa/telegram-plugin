@@ -7,6 +7,8 @@
 *.session-wal
 *.session-shm
 *.session.lock
+src/telegram_plugin/_application.json
+dist/
 
 # Anywhere a run might land output inside a checkout
 downloads/
