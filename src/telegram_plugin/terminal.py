@@ -111,8 +111,12 @@ class Terminal:
 class QrOutput:
     """QR frames for an agent's streaming command output, without a terminal."""
 
+    def __init__(self, *, theme: str = "dark") -> None:
+        self._theme = theme
+
     def say(self, text: str = "") -> None:
-        print(text, flush=True)
+        sys.stdout.write(text + "\n")
+        sys.stdout.flush()
 
     def ask(self, prompt: str) -> str:
         raise RuntimeError("hidden terminal input is required")
@@ -125,8 +129,7 @@ class QrOutput:
 
     def show_qr(self, url: str, seconds: int) -> None:
         frame = [HEADER, f"QR code — new code in {seconds}s:",
-                 "Scan the copy with a light background:",
-                 *render_for_chat(url), "Waiting for approval on your phone…"]
+                 *render_for_chat(url, theme=self._theme), "Waiting for approval on your phone…"]
         self.say("\n".join(frame))
 
     def countdown(self, seconds: int) -> None:

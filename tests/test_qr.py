@@ -38,13 +38,15 @@ def test_the_decoder_catches_swapped_halves():
     assert _decode(swapped)[: len(qr_matrix(LOGIN_URL))] != qr_matrix(LOGIN_URL)
 
 
-def test_chat_qr_decodes_on_both_themes_without_widening_the_frame():
-    lines = render_for_chat(LOGIN_URL)
-    height = len(render(LOGIN_URL, color=False))
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_chat_qr_has_one_complete_frame_in_the_selected_theme(theme):
+    lines = render_for_chat(LOGIN_URL, theme=theme)
     matrix = qr_matrix(LOGIN_URL)
-    assert _decode(lines[:height])[:len(matrix)] == matrix
-    on_dark = [[not light for light in row] for row in _decode(lines[height + 1:])]
-    assert on_dark[:len(matrix)] == matrix
+    drawn = _decode(lines)
+    if theme == "dark":
+        drawn = [[not light for light in row] for row in drawn]
+    assert drawn[:len(matrix)] == matrix
+    assert len(lines) <= 19
     assert max(map(len, lines)) <= 40
 
 

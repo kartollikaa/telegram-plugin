@@ -68,17 +68,19 @@ def test_the_login_skill_warns_about_the_sandbox_up_front():
     assert LOGIN_SKILL_TEXT.index("andbox") < LOGIN_SKILL_TEXT.index("## 1.")
 
 
-def test_the_login_skill_hands_over_a_path_the_operators_shell_can_run():
+def test_the_login_skill_launches_the_form_itself_with_no_manual_command():
     lowered = LOGIN_SKILL_TEXT.lower()
     assert "absolute path" in lowered
-    assert "does not have that variable" in lowered
+    assert "do not give the operator a command to copy or run" in lowered
+    assert "--browser --method phone" in lowered
 
 
 def test_the_login_skill_refuses_to_collect_secrets_in_conversation():
     lowered = LOGIN_SKILL_TEXT.lower()
     assert "do not ask the operator to" in lowered
-    assert "never printed back" in lowered
-    assert "must not travel through a tool call" in lowered
+    assert "never print submitted values back" in lowered
+    assert "must not travel through a\ntool call" in lowered
+    assert "never inspect it using browser automation" in lowered
 
 
 def test_the_login_skill_covers_every_outcome_the_cli_can_report():
@@ -89,11 +91,12 @@ def test_the_login_skill_covers_every_outcome_the_cli_can_report():
 
 
 def test_login_skill_offers_a_choice_and_streams_qr_before_process_exit():
-    for requirement in ("AskUserQuestion", "QR code here", "Phone number and code",
+    for requirement in ("AskUserQuestion", "QR code", "Phone number and code",
                         "--method qr", "without a TTY", "immediately", "refreshed QR",
                         "--resume", "--method phone"):
         assert requirement in LOGIN_SKILL, requirement
     assert "Do not send the operator to" in LOGIN_SKILL
+    assert "Never retype, redraw, or copy a QR into an assistant message" in LOGIN_SKILL
 
 
 def test_logout_skill_requires_confirmation_and_real_revocation():

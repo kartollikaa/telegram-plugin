@@ -10,13 +10,14 @@ allowed-tools:
 
 # Logging in
 
-Drive this yourself: check the state, ask which login method the operator wants, run that
-workflow, then confirm. The launcher is `${CLAUDE_PLUGIN_ROOT}/bin/telegram-login` on Claude;
-on Codex or another local agent, use its absolute path in the installed plugin.
+Drive this yourself: check state, let the operator choose QR or phone, start the process,
+wait for its outcome, and confirm the account. On Claude the launcher is
+`${CLAUDE_PLUGIN_ROOT}/bin/telegram-login`; elsewhere use its installed absolute path.
 
-**Sandbox first.** Telegram commands need write access to the plugin's state directory
-(`~/.local/state/telegram-plugin` by default) and a connection to Telegram. If `--status`
-answers `"authorized": "unknown"` with a sandbox hint, rerun outside the sandbox.
+**Sandbox first.** Commands need write access to the plugin's state directory and a
+connection to Telegram. The local form also needs permission to bind a loopback port and
+open the browser on the operator's machine. If blocked, rerun with the host's permission
+mechanism. Do not claim a form opened when the launcher reports failure.
 
 ## 1. Check current state
 
@@ -24,105 +25,86 @@ answers `"authorized": "unknown"` with a sandbox hint, rerun outside the sandbox
 "${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --status
 ```
 
-- `"credentials": "missing"` → step 2.
-- `"authorized": true` → report `account.name` and `account.id`. Mention `/telegram:logout`
-  if they want to disconnect or switch accounts; do not log them out automatically.
-- `"session_in_use": true` → wait for the other command to finish before starting a login.
-- `"authorized": false` → step 3.
+- `credentials: missing`: configure the API id and hash privately as in step 2.
+- `authorized: true`: report `account.name` and `account.id`. Mention `/telegram:logout`
+  for disconnecting or switching accounts; never log out automatically.
+- `session_in_use: true`: let that process finish; do not compete for the session.
+- `authorized: false`: continue to step 3.
+- `authorized: unknown`: relay the hint and resolve sandbox or connection access first.
 
-## 2. Configure credentials privately
+## 2. Configure API credentials privately
 
-The API id and hash come from https://my.telegram.org. Do not ask the operator to paste them
-into the conversation and do not read them back. Tell them to put these keys in `.env` under
-the `state_dir` from the status output, using the plugin's `.env.example` as a template:
+The API id and hash come from https://my.telegram.org. Do not ask the operator to paste
+these into chat. They belong in `.env` under `state_dir`, using `.env.example` as a template:
 
 ```text
 TELEGRAM_API_ID=
 TELEGRAM_API_HASH=
 ```
 
-Then repeat step 1. Values from `.env` are never printed back.
+Repeat step 1 afterwards. Values from `.env` are never printed back. Never read that file
+with a tool; the operator's shell does not have that variable `${CLAUDE_PLUGIN_ROOT}`.
 
-## 3. Let the operator choose
+## 3. Choose and start
 
-Use AskUserQuestion, or the host's equivalent interactive choice tool, with two options:
+Use AskUserQuestion or the host's interactive choice tool for the method only:
 
-- **QR code here** — show a scannable code in this CLI conversation.
-- **Phone number and code** — enter the phone number, login code, and two-step password
-  if enabled, with secret input hidden in a terminal.
+- **QR code**: scan with Telegram on the phone, Settings → Devices → Link Desktop Device.
+- **Phone number and code**: enter the number, code and optional two-step password privately.
 
-If the operator already chose in their request, use that choice. Do not start either workflow
-before they choose. If the host has no choice tool, ask the same question in text.
+If the operator already chose, use that choice. No choice tool: the local form's menu
+(`--browser` without a method) offers both options.
 
-### QR code here
-
-Run this yourself as a streaming/background command with unbuffered output and a timeout
-long enough for the scan:
+Start the selected method yourself; do not give the operator a command to copy or run:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --method qr
+"${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --browser --method phone
 ```
 
-On Claude, set Bash's `run_in_background: true` and Read its output file straight away;
-do not block on TaskOutput first. On a host with process sessions, yield after about one
-second and read that session's output while it runs.
+For QR use `--browser --method qr`. The process automatically opens a local form. It shows
+one QR and replaces it when the token changes; phone, code and 2FA stay in the same form.
+No extra terminal, manual command, or second scan is needed for 2FA. Tell the operator to
+complete the opened form and return here. Cancel in the form stops the workflow; leaving
+it unused times out. Keep the process alive using the host's background/process-session
+facility. Do not start another login while this one holds the session.
 
-This mode works without a TTY. **Display the actual QR frame from its output immediately**
-in a plain fenced code block, preserving every space and line. Output contains two stacked
-copies in opposite polarity: scan the copy with the light background for the current theme.
-Say to scan it from the phone's
-Telegram under **Settings → Devices → Link Desktop Device**. Do not send the operator to
-Terminal.app or iTerm for a QR, and do not claim the QR cannot appear here.
+The form is human-only. Never inspect it using browser automation, DOM snapshots,
+screenshots, network tools, or a proxy. Only process output and `auth-status.json` may
+be observed. Do not ask the operator to put a phone number, code, password or API credential
+in conversation, AskUserQuestion, or tool arguments. A secret must not travel through a
+tool call. The form submits directly to the local plugin process, which talks to Telegram.
+Never print submitted values back, store them in status, or read a `.session` file.
 
-Keep the process running and read its new output. When it prints a refreshed QR frame, show
-the newest frame promptly and say it replaces the previous one. Do not wait for process exit
-before displaying the code, invent a QR, substitute a link, or restart a running login.
+On a remote/headless host without a browser on the operator's machine, explain the actual
+limitation. Do not call a shell pipe a secure interactive terminal. A human-owned terminal
+with hidden code/password input remains supported only when the operator explicitly uses it.
 
-If the host cannot expose output until a process exits, explain that limitation and offer the
-interactive launcher in step 4 instead. A streaming host should use the QR workflow above.
+### Optional QR in CLI output
 
-- `authorized` / exit `0` → step 5.
-- `needs_password` / exit `4` → the QR was approved, but two-step verification remains.
-  Use step 4 with `--resume`. It asks only for the hidden password against the same session;
-  do not start another QR or ask for the password in conversation.
-- `cancelled`, `failed` or `expired` → relay the hint and offer to retry their chosen method.
+If the operator specifically wants QR in CLI and the host displays live raw command output,
+run `--method qr --theme dark` (use `--theme light` for a light output surface). This works
+without a TTY and flushes a single complete frame immediately. The raw tool output must be
+visible to the user; reading an output file into model context alone does not display it.
+Never retype, redraw, or copy a QR into an assistant message: model generation can delay
+and corrupt it. Do not stack opposite polarities. A refreshed QR replaces the previous token.
+If raw output is collapsed, unavailable, or unsuitable, use the automatically opened form.
+Do not send the operator to Terminal.app, iTerm, or a manual shell command.
 
-### Phone number and code
+If this CLI-only path returns `needs_password` / exit `4`, start `--browser --resume`
+yourself. It asks only for the password against the approved session, without another scan.
 
-Use step 4 with `--method phone`. Do not ask for the phone number, code or password in chat.
+## 4. Wait and confirm
 
-## 4. Hidden terminal input when needed
+Observe the original process until it exits. If its handle is unavailable, use `--wait`
+once while it is running, then check `--status`; do not start repeated watchers.
+`--wait` ignores stale outcomes from earlier runs. `timeout` means no fresh result arrived:
+check status and the original process; do not announce cancellation or success from that alone.
 
-Resolve the launcher's absolute path first: the operator's shell does not have that variable
-`${CLAUDE_PLUGIN_ROOT}`. Give one literal command, with the chosen flags, as a fenced `bash`
-block. In bb its **Run** button opens an inline terminal in this session; use it instead of
-asking for a separate terminal window. A plain CLI user can run it in their current terminal.
+- `authorized`: run `--status` and report the confirmed account name/id only when
+  `authorized` is true. Mention `/telegram:logout`.
+- `needs_password`: use `--browser --resume`, then observe that process.
+- `cancelled`, `expired`, `failed`: relay the hint and offer a retry of the chosen method.
+- `logged_out`: the logout workflow completed; use `/telegram:logout` for its details.
 
-```bash
-'/absolute/path/to/plugin/bin/telegram-login' --method phone
-```
-
-For an approved QR that needs a password, replace `--method phone` with `--resume`.
-Running the launcher without flags also offers a phone/QR menu in that same terminal.
-
-Once the operator starts the command, wait for its result or run:
-
-```bash
-"${CLAUDE_PLUGIN_ROOT}/bin/telegram-login" --wait
-```
-
-`--wait` reads `auth-status.json`; it can run inside a sandbox. Give it a long tool timeout or
-run it in the background. Do not start repeated watchers. `timeout` means no fresh result
-arrived: check `--status` and ask whether the command ran before offering a retry.
-
-## 5. Confirm
-
-After either workflow finishes, run `--status` and report the account name and id only when
-`authorized` is true. Mention `/telegram:logout` as the way to disconnect. If status is unknown,
-say why; do not turn an old `cancelled` or `authorized` result into the current outcome.
-
-Never copy a `.session` file from another application.
-A credential, code, or password must not travel through a tool call, conversation, or
-command argument: the operator types secrets
-only into hidden terminal prompts. A QR frame is the exception needed for the selected QR
-workflow; show it only in this operator's conversation.
+Never copy a `.session` file from another application. Validate host input/output mechanics
+separately from pseudo-terminal tests before claiming a host workflow works.

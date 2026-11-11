@@ -108,43 +108,43 @@ which breaks both of them.
 /telegram:login
 ```
 
-The bundled skill checks the state and lets you choose **QR code here** or **Phone
-number and code**. For QR, the agent runs the login and shows the QR directly in the
-CLI conversation, then displays fresh codes as they rotate. Two stacked copies use
-opposite polarity so either a light or dark theme has a code with a light background;
-scan that copy. Scan it from Telegram on
-your phone under **Settings → Devices → Link Desktop Device**. This needs a host
-that can show command output while the command runs; other hosts offer terminal login.
+The bundled skill checks the account and lets you choose **QR code** or **Phone
+number and code**. The agent starts the selected process and the plugin automatically
+opens a private form in your local browser. No terminal command to copy or run.
 
-Phone login uses hidden terminal input for the login code and two-step password.
-In bb, the command's **Run** button opens an inline terminal in this session. In a
-plain CLI, run it in your current terminal. If an in-conversation QR is approved but
-Telegram needs a two-step password, `--resume` finishes that password step with
-hidden input against the same session, without another scan.
+The form contains the complete workflow: phone number → Telegram code → two-step
+password if two-step verification is enabled, or QR → optional two-step password. A wrong code or password
+can be retried there. Scan the single QR from Telegram on your phone under
+**Settings → Devices → Link Desktop Device**; it updates in place. Cancel stops the
+login, and an unused form times out. The page shows the result before it disconnects.
 
-The login itself is one interactive program, `bin/telegram-login`:
+Codes and passwords use masked fields. They go to the local plugin process, which
+authorises with Telegram; they never go through agent dialogs, tool arguments,
+stdout, status files or request logs. The agent must not inspect the form with
+browser tools or screenshots. A secret must not travel through a tool call.
+A local browser on the same machine is required for
+this route; a remote/headless environment cannot claim to open a form on your device.
 
-1. It asks you to choose **1. Phone number and login code** or **2. QR code**.
-2. Phone login asks for your number and the code Telegram sends you. QR login draws
-   the code in this same terminal and refreshes it in place, with a countdown;
-   `p` still switches from QR to phone login.
-3. If the account has two-step verification, the password is asked in the same
-   terminal, with hidden input and your password hint. A wrong one is asked again.
-4. It ends with `Logged in as <name> (id …)`, or a one-line reason why not.
+For a QR specifically in CLI output, `--method qr --theme dark` prints a single
+complete frame per token (`--theme light` for light output). The host must display
+raw command output while the command runs. The agent must never retype a QR in its
+answer: that introduces delay and can corrupt the code. If the host cannot display
+it, use the automatic form. If a CLI QR needs 2FA, the agent starts
+`--browser --resume`, which finishes the approved session without another scan.
 
-The login code and the password are typed with hidden input, because a terminal's
-output may be read back by an agent (bb's inline terminal reports it to the chat).
-Nothing secret is ever accepted as a command-line argument, so none lands in shell
-history or the process table, and no tool call ever carries one: **a password must
-not travel through a tool call**.
+The original human-owned terminal flow remains available: no flags offers a menu;
+`--method phone` or `--method qr` skips it. QR refreshes on the alternate screen,
+`p` switches to phone, and code/password use hidden input. An agent's Bash pipe
+is not an interactive terminal, even when the agent runs inside Warp.
 
-The same commands by hand:
+Manual commands, if you choose to run the launcher yourself:
 
 ```bash
-./bin/telegram-login
-./bin/telegram-login --method qr
-./bin/telegram-login --method phone
-./bin/telegram-login --resume
+./bin/telegram-login --browser
+./bin/telegram-login --browser --method phone
+./bin/telegram-login --browser --method qr
+./bin/telegram-login --browser --resume
+./bin/telegram-login --method qr --theme dark
 ./bin/telegram-login --status
 ./bin/telegram-login --wait
 ```
@@ -179,10 +179,11 @@ happens when the wait runs out.
 
 ## Log out
 
-Ask for `/telegram:logout`, or run:
+Ask for `/telegram:logout`: the agent starts the local confirmation form itself.
+For manual use:
 
 ```bash
-./bin/telegram-login --logout
+./bin/telegram-login --browser --logout
 ```
 
 It shows the connected account and asks you to confirm. An empty answer or `n`
