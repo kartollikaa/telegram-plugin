@@ -131,7 +131,7 @@ def test_the_readme_leads_with_the_command_not_the_script():
 
 
 def test_the_readme_no_longer_offers_the_link_flow():
-    for gone in ("--qr", "tg://", "needs_password"):
+    for gone in ("--qr", "tg://"):
         assert gone not in README, gone
 
 

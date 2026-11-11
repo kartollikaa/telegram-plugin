@@ -73,6 +73,8 @@ class Operator:
 
 def test_qr_then_phone_then_password_on_a_real_terminal(tmp_path):
     operator = Operator(tmp_path, "phone_then_password")
+    operator.expect("Choose login method [1/2]: ")
+    operator.type("2\r")
     operator.expect(ALTERNATE_SCREEN)
     operator.expect("Link Desktop Device")
     operator.expect("▀")
@@ -108,6 +110,8 @@ def test_qr_then_phone_then_password_on_a_real_terminal(tmp_path):
 
 def test_ctrl_c_on_the_code_screen_cancels_and_hands_the_terminal_back(tmp_path):
     operator = Operator(tmp_path, "never_scanned")
+    operator.expect("Choose login method [1/2]: ")
+    operator.type("2\r")
     operator.expect("New code in")
     operator.type("\x03")
     operator.expect("Login cancelled, no account was connected.")
@@ -121,6 +125,8 @@ def test_ctrl_c_at_a_prompt_cancels_at_once(tmp_path):
     """asyncio's own Ctrl-C handler only schedules a cancel, which a blocking prompt
     never notices; the login replaces it so one press is enough."""
     operator = Operator(tmp_path, "phone_then_password")
+    operator.expect("Choose login method [1/2]: ")
+    operator.type("2\r")
     operator.expect("New code in")
     operator.type("p")
     operator.expect("Phone number, with country code: ")
@@ -132,9 +138,58 @@ def test_ctrl_c_at_a_prompt_cancels_at_once(tmp_path):
 
 def test_closing_the_terminal_still_leaves_an_outcome(tmp_path):
     operator = Operator(tmp_path, "never_scanned")
+    operator.expect("Choose login method [1/2]: ")
+    operator.type("2\r")
     operator.expect("New code in")
     os.close(operator.master)
     operator.process.wait(10)
     payload = operator.status()
     assert payload["state"] == "cancelled"
     assert "terminal was closed" in payload["hint"]
+
+
+def test_phone_choice_needs_no_qr_on_a_real_terminal(tmp_path):
+    operator = Operator(tmp_path, "phone_then_password")
+    operator.expect("Choose login method [1/2]: ")
+    operator.type("1\r")
+    operator.expect("Phone number, with country code: ")
+    operator.type("+447700900123\r")
+    operator.expect("Login code (hidden as you type): ")
+    operator.type("12345\r")
+    operator.expect("Password (hidden as you type): ")
+    operator.type("wrong\r")
+    operator.expect("Password (hidden as you type): ", count=2)
+    operator.type("right\r")
+    operator.expect("Logged in as Test")
+    assert operator.finish() == 0
+    assert ALTERNATE_SCREEN not in operator.seen
+    assert "12345" not in operator.seen
+    assert "TTY-RESTORED" in operator.seen
+
+
+def test_ctrl_c_at_method_menu_leaves_a_cancelled_outcome(tmp_path):
+    operator = Operator(tmp_path, "never_scanned")
+    operator.expect("Choose login method [1/2]: ")
+    operator.type("\x03")
+    operator.expect("Login cancelled")
+    assert operator.finish() == 130
+    assert operator.status()["state"] == "cancelled"
+
+
+def test_logout_names_the_account_before_confirmation(tmp_path):
+    operator = Operator(tmp_path, "logout")
+    operator.expect("Log out Test (id 42) from this plugin? [y/N]: ")
+    operator.type("yes\r")
+    operator.expect("Logged out of Telegram")
+    assert operator.finish() == 0
+    assert operator.status()["state"] == "logged_out"
+
+
+def test_declining_logout_in_a_real_terminal_preserves_session(tmp_path):
+    operator = Operator(tmp_path, "logout")
+    operator.expect("Log out Test (id 42) from this plugin? [y/N]: ")
+    operator.type("\r")
+    operator.expect("Logout cancelled")
+    assert operator.finish() == 1
+    assert operator.status()["state"] == "cancelled"
+    assert (tmp_path / "telegram.session").exists()

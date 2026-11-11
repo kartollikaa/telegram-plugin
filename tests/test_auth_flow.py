@@ -135,7 +135,9 @@ async def test_the_screen_is_left_on_every_way_out_of_the_qr(tmp_path):
     with pytest.raises(KeyboardInterrupt):
         await interactive_login(_config(tmp_path), StubClient(StubQr()), ui, FAST)
     names = [event[0] for event in ui.events]
-    assert names.index("leave_qr") < names.index("ask")
+    phone_prompt = next(i for i, event in enumerate(ui.events)
+                        if event[0] == "ask" and "Phone number" in event[1])
+    assert names.index("leave_qr") < phone_prompt
 
 
 async def test_the_session_file_is_tightened_before_the_wait_not_after(tmp_path):
@@ -165,7 +167,7 @@ async def test_p_switches_to_phone_and_code(tmp_path, steps):
     result = await interactive_login(config, client, ui, FAST)
     assert result["state"] == "authorized"
     assert client.sent == ["447700900123"]
-    assert steps == ["qr", "phone", "code", "authorized"]
+    assert steps == ["method", "qr", "phone", "code", "authorized"]
     assert client.qr.wait_cancelled
 
 
@@ -214,7 +216,7 @@ async def test_a_two_step_account_is_finished_in_the_same_session(tmp_path, step
     assert result["state"] == "authorized"
     assert client.signed_in_with == ["password"]
     assert "Password hint: usual one" in ui.said()
-    assert steps == ["qr", "password", "authorized"]
+    assert steps == ["method", "qr", "password", "authorized"]
 
 
 async def test_a_wrong_password_is_asked_again(tmp_path):
@@ -568,7 +570,7 @@ def test_the_double_matches_telethon_on_which_calls_are_coroutines():
         assert inspect.iscoroutinefunction(getattr(QRLogin, name)), name
         assert inspect.iscoroutinefunction(getattr(StubQr, name)), name
     for name in ("connect", "is_user_authorized", "qr_login", "send_code_request", "sign_in",
-                 "get_me"):
+                 "get_me", "log_out"):
         assert inspect.iscoroutinefunction(getattr(TelegramClient, name)), name
         assert inspect.iscoroutinefunction(getattr(StubClient, name)), name
 
@@ -596,7 +598,7 @@ async def test_p_after_a_confirmed_scan_does_not_abandon_it(tmp_path):
     ui = ScriptedUi(keys=[(0.35, "p")])
     result = await interactive_login(_config(tmp_path), StubClient(qr), ui, FAST)
     assert result["state"] == "authorized"
-    assert not any(event[0] == "ask" for event in ui.events)
+    assert not any(event[0] == "ask" and "Phone number" in event[1] for event in ui.events)
 
 
 async def test_the_p_key_on_a_russian_layout_switches_too(tmp_path):

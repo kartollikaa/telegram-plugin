@@ -11,7 +11,7 @@ client, so it sees what you see. That is the point: the Bot API cannot read
 conversations you are already part of.
 
 The runtime is a command-line program that prints one JSON object per call, plus
-three Agent Skills that teach an agent when and how to call it. Any local agent
+Agent Skills that teach an agent when and how to call it. Any local agent
 that can run an executable can use it — there is no server and no protocol to
 speak.
 
@@ -60,7 +60,7 @@ launcher's absolute path and let it run commands:
 /absolute/path/to/telegram-plugin/bin/telegram read @somechannel --limit 20
 ```
 
-The three skills under [`skills/`](skills/) are plain Markdown with YAML front
+The skills under [`skills/`](skills/) are plain Markdown with YAML front
 matter; an agent that understands Agent Skills can load them as they are, and one
 that cannot still has the `--help` output of every command.
 
@@ -108,17 +108,26 @@ which breaks both of them.
 /telegram:login
 ```
 
-The bundled skill checks the state and, if you are not logged in, gives you one
-command. In bb chat it comes with a **Run** button that opens a terminal right under
-the message; in a plain CLI you paste it into your own terminal. The skill then waits
-for that terminal to finish and confirms which account is connected.
+The bundled skill checks the state and lets you choose **QR code here** or **Phone
+number and code**. For QR, the agent runs the login and shows the QR directly in the
+CLI conversation, then displays fresh codes as they rotate. Two stacked copies use
+opposite polarity so either a light or dark theme has a code with a light background;
+scan that copy. Scan it from Telegram on
+your phone under **Settings → Devices → Link Desktop Device**. This needs a host
+that can show command output while the command runs; other hosts offer terminal login.
+
+Phone login uses hidden terminal input for the login code and two-step password.
+In bb, the command's **Run** button opens an inline terminal in this session. In a
+plain CLI, run it in your current terminal. If an in-conversation QR is approved but
+Telegram needs a two-step password, `--resume` finishes that password step with
+hidden input against the same session, without another scan.
 
 The login itself is one interactive program, `bin/telegram-login`:
 
-1. It draws a QR code in the terminal. Scan it from Telegram on your phone:
-   **Settings → Devices → Link Desktop Device**. Telegram's login tokens are
-   short-lived; the code is redrawn in place as each one expires, with a countdown.
-2. Or press `p` and log in with your phone number and the code Telegram sends you.
+1. It asks you to choose **1. Phone number and login code** or **2. QR code**.
+2. Phone login asks for your number and the code Telegram sends you. QR login draws
+   the code in this same terminal and refreshes it in place, with a countdown;
+   `p` still switches from QR to phone login.
 3. If the account has two-step verification, the password is asked in the same
    terminal, with hidden input and your password hint. A wrong one is asked again.
 4. It ends with `Logged in as <name> (id …)`, or a one-line reason why not.
@@ -132,9 +141,12 @@ not travel through a tool call**.
 The same commands by hand:
 
 ```bash
-./bin/telegram-login              # log in: QR code, or p for phone and code
-./bin/telegram-login --status     # is it authorised, and as whom?
-./bin/telegram-login --wait       # wait for a login running elsewhere to finish
+./bin/telegram-login
+./bin/telegram-login --method qr
+./bin/telegram-login --method phone
+./bin/telegram-login --resume
+./bin/telegram-login --status
+./bin/telegram-login --wait
 ```
 
 `--status` prints JSON and changes nothing. It answers while another command holds
@@ -144,10 +156,15 @@ failing.
 
 Every way out of the login, including Ctrl-C, a closed terminal, a wrong code too many
 times or a network error, leaves its outcome in `auth-status.json` in the state
-directory: `authorized`, `cancelled`, `failed` or `expired`, with a hint. That file is
+directory: `authorized`, `needs_password`, `logged_out`, `cancelled`, `failed` or
+`expired`, with a hint. That file is
 what `--wait` reads. It notices a login whose process died without writing anything,
 and it never mistakes an outcome left by an earlier run for this one. The file never
 holds a login link.
+
+For login commands, exit `0` means success, `1` failure or declined logout, `2`
+invalid usage or missing credentials, `3` a wait timeout, `4` a QR that needs the
+hidden password step, and `130` interruption. `--status` always returns JSON and exit `0`.
 
 The QR code needs [segno](https://pypi.org/project/segno/), a pure-Python QR encoder.
 An existing install picks it up on the next run of either launcher.
@@ -159,6 +176,21 @@ Each command takes an exclusive lock on the session file, so two agents never ra
 for the auth key. The second waits rather than failing — see
 [One account, several sessions](#one-account-several-sessions) for how long and what
 happens when the wait runs out.
+
+## Log out
+
+Ask for `/telegram:logout`, or run:
+
+```bash
+./bin/telegram-login --logout
+```
+
+It shows the connected account and asks you to confirm. An empty answer or `n`
+cancels. On confirmation, it revokes this plugin's Telegram session and removes
+its session file through [Telethon logout](https://docs.telethon.dev/en/stable/modules/client.html#telethon.client.auth.AuthMethods.log_out).
+Other devices, API credentials, and downloads are kept. If Telegram does not
+confirm logout, the command reports failure and keeps the local session for a retry.
+To switch accounts, log out first, then run the login again.
 
 ## Commands
 
@@ -251,6 +283,7 @@ Three, all usable by name from inside a session:
 |---|---|
 | `/telegram:read` | the flows — find a chat, read it, follow a thread, search, download, export — and the rules that keep results small |
 | `/telegram:login` | authorises the session, or explains why it is not authorised |
+| `/telegram:logout` | confirms and revokes this plugin's session, or switches accounts via a fresh login |
 | `/telegram:send` | the explicit send and reply path, and the rules around it |
 
 ## What you are handing over

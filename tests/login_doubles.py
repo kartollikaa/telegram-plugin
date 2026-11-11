@@ -115,6 +115,7 @@ class StubClient:
         self.sent: list[str] = []
         self.signed_in_with: list[str] = []
         self.disconnected = False
+        self.logout_calls = 0
 
     async def connect(self):
         if self.connect_error:
@@ -160,6 +161,10 @@ class StubClient:
     async def disconnect(self):
         self.disconnected = True
 
+    async def log_out(self):
+        self.logout_calls += 1
+        return True
+
 
 class ScriptedUi:
     """The operator: answers prompts from a script and presses keys on a timetable.
@@ -167,8 +172,8 @@ class ScriptedUi:
     An answer that is an exception instance is raised instead, the way Ctrl-C or
     Ctrl-D surfaces from a real prompt."""
 
-    def __init__(self, answers=(), secrets=(), keys=()):
-        self.answers = list(answers)
+    def __init__(self, answers=(), secrets=(), keys=(), *, method="2"):
+        self.answers = ([method] if method is not None else []) + list(answers)
         self.secrets = list(secrets)
         self.keys = sorted(keys)
         self.events: list[tuple] = []

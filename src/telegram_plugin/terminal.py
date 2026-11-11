@@ -11,7 +11,7 @@ import termios
 import tty
 from typing import TextIO
 
-from telegram_plugin.qr import DARK_ON_LIGHT, RESET, render
+from telegram_plugin.qr import DARK_ON_LIGHT, RESET, render, render_for_chat
 
 ALTERNATE_SCREEN = "\x1b[?1049h"
 MAIN_SCREEN = "\x1b[?1049l"
@@ -106,3 +106,37 @@ class Terminal:
             self._out.flush()
         except OSError:
             pass  # the terminal went away; the outcome still reaches the status file
+
+
+class QrOutput:
+    """QR frames for an agent's streaming command output, without a terminal."""
+
+    def say(self, text: str = "") -> None:
+        print(text, flush=True)
+
+    def ask(self, prompt: str) -> str:
+        raise RuntimeError("hidden terminal input is required")
+
+    def ask_secret(self, prompt: str) -> str:
+        raise RuntimeError("hidden terminal input is required")
+
+    def enter_qr(self) -> None:
+        pass
+
+    def show_qr(self, url: str, seconds: int) -> None:
+        frame = [HEADER, f"QR code — new code in {seconds}s:",
+                 "Scan the copy with a light background:",
+                 *render_for_chat(url), "Waiting for approval on your phone…"]
+        self.say("\n".join(frame))
+
+    def countdown(self, seconds: int) -> None:
+        pass
+
+    def notice(self, text: str) -> None:
+        self.say(text)
+
+    def poll_key(self) -> str | None:
+        return None
+
+    def leave_qr(self) -> None:
+        pass

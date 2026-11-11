@@ -1,7 +1,7 @@
 """Authorisation, deliberately out of process and in front of a human.
 
-* no flags — the login itself, in a terminal: a QR code redrawn in place as its token
-  rotates, one key to switch to phone and code, a hidden prompt for a two-step password.
+* no flags — choose phone and code or an inline QR, with a hidden two-step password.
+* `--logout` — confirm and revoke this plugin's session.
 * `--status` — whether the session is usable, and under whom. Changes nothing.
 * `--wait` — blocks until a login running elsewhere reports its outcome, so an agent
   can hand the operator the command and learn when they are done.
@@ -48,18 +48,20 @@ from telegram_plugin.client import ensure_state_dir, session_lock
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import MissingCredentials, SessionLocked, describe
 
-FINAL_STATES = frozenset({"authorized", "cancelled", "failed", "expired"})
+FINAL_STATES = frozenset({
+    "authorized", "logged_out", "needs_password", "cancelled", "failed", "expired",
+})
 DEFAULT_WAIT = 480.0
 COMMAND = "bin/telegram-login"
 
 NEEDS_TERMINAL = (
-    f"{COMMAND} is interactive: it shows a QR code and asks for a password if the account "
-    "has one, so it needs a terminal. Run it in a terminal window, or press Run under the "
-    "command block in bb chat."
+    f"{COMMAND} is interactive and needs a terminal for login choices, hidden passwords "
+    "and logout confirmation. Run it in your current terminal, or press Run under the "
+    "command block in bb chat to use the inline terminal."
 )
 QR_REMOVED = (
-    f"--qr was removed: a link cannot be opened on the device that shows it, and it cannot "
-    f"finish a two-step login. Run {COMMAND} without flags in a terminal."
+    f"--qr was replaced: run {COMMAND} --method qr for QR frames in command output, "
+    f"or run {COMMAND} without flags for the interactive menu."
 )
 
 
@@ -159,7 +161,10 @@ def _publish(config: Config, step: str) -> None:
     write_status(config, {"state": "waiting", "step": step})
 
 
-async def interactive_login(config: Config, client: Any, ui: Ui, pace: Pace = DEFAULT_PACE) -> dict:
+async def interactive_login(
+    config: Config, client: Any, ui: Ui, pace: Pace = DEFAULT_PACE,
+    *, method: str | None = None, can_prompt: bool = True,
+) -> dict:
     try:
         await client.connect()
         # Telethon creates the session file with the plain umask, and the auth key lands
@@ -168,8 +173,13 @@ async def interactive_login(config: Config, client: Any, ui: Ui, pace: Pace = DE
         if await client.is_user_authorized():
             return _authorized(config, await _describe_me(client), already=True)
 
-        _publish(config, "qr")
-        outcome = await _qr_phase(client, ui, pace)
+        if method is None:
+            _publish(config, "method")
+            method = _choose_method(ui)
+        outcome = _PASSWORD if method == "resume" else method
+        if outcome == "qr":
+            _publish(config, "qr")
+            outcome = await _qr_phase(client, ui, pace)
         if outcome == _EXPIRED:
             minutes = max(round(pace.limit / 60), 1)
             return write_status(config, {
@@ -180,9 +190,54 @@ async def interactive_login(config: Config, client: Any, ui: Ui, pace: Pace = DE
             _publish(config, "phone")
             outcome = await _phone_phase(config, client, ui, pace.attempts)
         if outcome == _PASSWORD:
+            if not can_prompt:
+                return write_status(config, {
+                    "state": "needs_password",
+                    "hint": (
+                        "QR approved; this account needs its two-step password. "
+                        f"Run {COMMAND} --resume in a terminal with hidden input. "
+                        "The QR does not need to be scanned again."
+                    ),
+                })
             _publish(config, "password")
             await _password_phase(client, ui, pace.attempts)
         return _authorized(config, await _describe_me(client))
+    finally:
+        _tighten(config.session_path)
+        await client.disconnect()
+
+
+def _choose_method(ui: Ui) -> str:
+    ui.say("Choose how to log in to Telegram:")
+    ui.say("  1. Phone number and login code (password if two-step verification is enabled)")
+    ui.say("  2. QR code shown here")
+    ui.say("Ctrl-C cancels.")
+    while True:
+        choice = ui.ask("Choose login method [1/2]: ").strip().casefold()
+        if choice in {"1", "p", "phone"}:
+            return _PHONE
+        if choice in {"2", "q", "qr"}:
+            return "qr"
+        ui.say("Enter 1 for phone number or 2 for QR code.")
+
+
+async def interactive_logout(config: Config, client: Any, ui: Ui) -> dict:
+    try:
+        await client.connect()
+        _tighten(config.session_path)
+        if not await client.is_user_authorized():
+            return write_status(config, {"state": "logged_out", "already": True})
+        account = await _describe_me(client)
+        _publish(config, "logout_confirmation")
+        answer = ui.ask(
+            f"Log out {account['name']} (id {account['id']}) from this plugin? [y/N]: "
+        ).strip().casefold()
+        if answer not in {"y", "yes"}:
+            return write_status(config, {"state": "cancelled", "hint": "logout cancelled"})
+        _publish(config, "logout")
+        if not await client.log_out():
+            raise LoginFailed("Telegram did not confirm logout; the session was kept")
+        return write_status(config, {"state": "logged_out"})
     finally:
         _tighten(config.session_path)
         await client.disconnect()
@@ -527,7 +582,9 @@ def _wait_command(
             if payload.get("state") in FINAL_STATES:
                 if relevant:
                     print(json.dumps(payload, ensure_ascii=False, indent=2))
-                    return 0 if payload["state"] == "authorized" else 1
+                    if payload["state"] in {"authorized", "logged_out"}:
+                        return 0
+                    return 4 if payload["state"] == "needs_password" else 1
             elif _login_running(config, pid):
                 followed, gone_since = pid, None
             elif relevant and gone_since is None:
@@ -560,13 +617,16 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="telegram-login",
         description=(
-            "Log this plugin's own Telegram session in. Without flags: scan a QR code shown "
-            "in the terminal, or press p for phone number and code; a two-step password is "
+            "Manage this plugin's own Telegram session. Without flags: choose phone number "
+            "and login code or a QR code shown in this terminal; a two-step password is "
             "asked with hidden input. Nothing secret is ever taken as an argument."
         ),
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--status", action="store_true", help="report the login state and exit")
+    mode.add_argument("--logout", action="store_true", help="confirm and log out this plugin")
+    mode.add_argument("--method", choices=("phone", "qr"), help="start the chosen login method")
+    mode.add_argument("--resume", action="store_true", help="finish an approved QR with hidden input")
     mode.add_argument(
         "--wait",
         action="store_true",
@@ -607,11 +667,19 @@ def _say(text: str, stream: Any) -> None:
 
 
 def _finished(result: dict) -> int:
+    if result["state"] == "needs_password":
+        _say(result["hint"], sys.stdout)
+        return 4
+    if result["state"] == "logged_out":
+        message = "Already logged out." if result.get("already") else "✓ Logged out of Telegram."
+        _say(message, sys.stdout)
+        return 0
     if result["state"] == "authorized":
         account = result["account"]
         lead = "Already logged in" if result.get("already") else "✓ Logged in"
         _say(f"{lead} as {account['name']} (id {account['id']}). Telegram is ready to use.",
              sys.stdout)
+        _say(f"To log out, run {COMMAND} --logout.", sys.stdout)
         return 0
     _complain(result["hint"])
     return 1
@@ -671,32 +739,50 @@ def main(
         # this session, logging in here would put two clients on one auth key and Telegram
         # would revoke it. Waiting, because the holder lets go once it goes idle.
         with session_lock(config.session_path, config.lock_wait):
+            if arguments.logout and not config.session_path.exists():
+                return _finished(write_status(config, {"state": "logged_out", "already": True}))
             if not (config.api_id and config.api_hash):
                 raise MissingCredentials()
             if ui is None:
-                from telegram_plugin.terminal import Terminal, is_interactive
+                from telegram_plugin.terminal import QrOutput, Terminal, is_interactive
 
-                if not is_interactive(sys.stdin, sys.stdout):
+                can_prompt = is_interactive(sys.stdin, sys.stdout)
+                if not can_prompt and arguments.method != "qr":
                     return _failed(config, NEEDS_TERMINAL, code=1)
 
-                ui = Terminal()
+                ui = Terminal() if can_prompt else QrOutput()
+            else:
+                can_prompt = True
             # Overwrite any outcome an earlier run left, before anyone starts polling.
             write_status(config, {"state": "starting"})
             client = (client_factory or _telethon_client)(config)
             with _interrupts():
-                result = asyncio.run(interactive_login(config, client, ui, pace))
+                if arguments.logout:
+                    result = asyncio.run(interactive_logout(config, client, ui))
+                else:
+                    method = "resume" if arguments.resume else arguments.method
+                    result = asyncio.run(interactive_login(
+                        config, client, ui, pace, method=method, can_prompt=can_prompt,
+                    ))
             return _finished(result)
     except SessionLocked as exc:
         return _failed(config, describe(exc), code=1)
     except MissingCredentials as exc:
         return _failed(config, describe(exc), code=2)
     except LoginFailed as exc:
-        return _failed(config, f"{exc.hint}; run {COMMAND} again to retry", code=1)
+        command = f"{COMMAND} --logout" if arguments.logout else COMMAND
+        return _failed(config, f"{exc.hint}; run {command} again to retry", code=1)
     except Interrupted as exc:
-        return _failed(config, f"{exc.reason}, no account was connected",
+        hint = "logout interrupted; check --status" if arguments.logout else (
+            f"{exc.reason}, no account was connected"
+        )
+        return _failed(config, hint,
                        code=130, state="cancelled")
     except (EOFError, KeyboardInterrupt):
-        return _failed(config, "login cancelled, no account was connected",
+        hint = "logout interrupted; check --status" if arguments.logout else (
+            "login cancelled, no account was connected"
+        )
+        return _failed(config, hint,
                        code=130, state="cancelled")
     except Exception as exc:  # noqa: BLE001
         return _failed(config, describe(exc), code=1)
