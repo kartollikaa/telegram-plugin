@@ -240,4 +240,43 @@ async def test_gateway_disables_rpc_retry_and_automatic_flood_sleep(tmp_path, mo
         return client
     monkeypatch.setattr('telegram_plugin.client.TelegramClient', factory)
     assert await TelethonGateway(config)._open_client() is client
-    assert created == [{'request_retries': 0, 'flood_sleep_threshold': 0, 'raise_last_call_error': True}]
+    assert created == [{'request_retries': 0, 'flood_sleep_threshold': 0,
+                       'raise_last_call_error': True, 'auto_reconnect': False}]
+
+
+async def test_transport_policy_prevents_replaying_unacknowledged_requests(tmp_path, monkeypatch):
+    from telethon import TelegramClient
+    from telethon.sessions import MemorySession
+
+    async def requeued_after_disconnect(client):
+        sender = client._sender
+        sender._user_connected = True
+        sender._connection = SimpleNamespace(disconnect=AsyncMock())
+        sender._connect = AsyncMock()
+        sender._disconnect = AsyncMock()
+        sender._auto_reconnect_callback = None
+        pending = object()
+        sender._pending_state = {123: pending}
+        requeued = []
+        sender._send_queue = SimpleNamespace(extend=lambda states: requeued.extend(states))
+        await sender._reconnect(OSError('simulated lost acknowledgement'))
+        return requeued, sender._connect.await_count, sender._disconnect.await_count
+
+    control = TelegramClient(MemorySession(), 1, 'test', auto_reconnect=True)
+    replayed, connections, disconnects = await requeued_after_disconnect(control)
+    assert len(replayed) == 1
+    assert (connections, disconnects) == (1, 0)
+
+    def factory(*args, **kwargs):
+        client = TelegramClient(MemorySession(), 1, 'test', **kwargs)
+        client.connect = AsyncMock()
+        client.is_user_authorized = AsyncMock(return_value=True)
+        return client
+
+    monkeypatch.setattr('telegram_plugin.client.TelegramClient', factory)
+    config = load_config({'TELEGRAM_STATE_DIR': str(tmp_path),
+                          'TELEGRAM_API_ID': '1', 'TELEGRAM_API_HASH': 'test'})
+    client = await TelethonGateway(config)._open_client()
+    replayed, connections, disconnects = await requeued_after_disconnect(client)
+    assert replayed == []
+    assert (connections, disconnects) == (0, 1)

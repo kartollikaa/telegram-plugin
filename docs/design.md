@@ -556,6 +556,10 @@ locked gateway operation finishes; Telethon never reopens an upload path.
 selects photo transport; Telegram validates the image bytes. The gateway returns
 the actual media type and IDs from the confirmed message. Local paths and captions
 are not included in success output. All account operations disable automatic RPC
-retries and flood-wait sleeping; failures surface once for the operator to assess.
+retries, automatic reconnection and flood-wait sleeping; failures surface once for the operator to assess.
+Retry policy must cover both RPC retry loops and transport reconnection, which can
+requeue unacknowledged requests independently of RPC retries. An offline transport
+test first demonstrates replay with reconnection enabled, then verifies that the
+gateway's actual client configuration disconnects without requeueing.
 A transport failure can leave delivery uncertain and must never trigger an
 agent-driven repeat. The CLI does not upload URLs, albums or directory trees.

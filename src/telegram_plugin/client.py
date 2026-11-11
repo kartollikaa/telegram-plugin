@@ -315,6 +315,7 @@ class TelethonGateway:
         client = TelegramClient(
             str(config.session_path), config.api_id, config.api_hash,
             request_retries=0, flood_sleep_threshold=0, raise_last_call_error=True,
+            auto_reconnect=False,
         )
         await client.connect()
         if not await client.is_user_authorized():

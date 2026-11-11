@@ -268,7 +268,7 @@ media output includes confirmed `message_id`, `chat_id`, `chat_title`, `reply_to
 and `media_type` (`photo` or `document`, taken from Telegram's response). No local
 path or caption is echoed. Runtime failures use the JSON error contract; invalid
 CLI syntax uses exit 2 and argparse diagnostics. The client disables automatic RPC
-retries and flood-wait sleeping. An interrupted or failed upload does not confirm
+retries, automatic reconnection/replay and flood-wait sleeping. An interrupted or failed upload does not confirm
 message delivery: inspect the chat before any operator-authorized retry.
 
 
