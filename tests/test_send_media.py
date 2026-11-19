@@ -1,6 +1,6 @@
 import json
 import os
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -21,15 +21,22 @@ class MediaGateway(FakeGateway):
     def __init__(self):
         super().__init__()
         self.uploads = []
+        self.albums = []
         self.accesses = 0
 
     def _check(self):
         self.accesses += 1
         super()._check()
 
-    async def send_media(self, ref, stream, *, media_type, caption='', reply_to=None):
+    async def send_media(self, ref, files, *, media_type, caption='', reply_to=None):
         self._check()
-        self.uploads.append((ref.value, stream.name, stream.read(), media_type, caption, reply_to))
+        if isinstance(files, list):
+            self.albums.append((ref.value, [s.name for s in files],
+                                [s.read() for s in files], media_type, caption, reply_to))
+            return {'message_ids': list(range(1000, 1000 + len(files))),
+                    'grouped_id': 4242, 'chat_id': -1001, 'chat_title': 'Alpha',
+                    'reply_to': reply_to, 'media_type': media_type}
+        self.uploads.append((ref.value, files.name, files.read(), media_type, caption, reply_to))
         return {'message_id': 999, 'chat_id': -1001, 'chat_title': 'Alpha',
                 'reply_to': reply_to, 'media_type': media_type}
 
@@ -130,6 +137,7 @@ def test_unsafe_media_never_reaches_gateway(capsys, tmp_path, kind, monkeypatch,
     ['--photo', 'a.png', '--document', 'b.pdf'],
     ['--file', 'a.png', '--document', 'b.pdf'],
     ['--file', 'a.png', '--text', 'hi'],
+    ['--file', 'a.png', '--file', 'b.png', '--text', 'hi'],
     ['--text', 'hi', '--photo', 'a.png'],
     ['--document', 'a', '--caption', 'hi', '--caption-file', 'caption'],
     ['--document', 'a', '--reply-to', '0'],
@@ -328,3 +336,323 @@ def test_photo_sniff_preserves_stream_position(offset):
     assert photo_format(stream) == 'png'
     assert stream.tell() == offset
     assert stream.read() == PNG
+
+
+@pytest.mark.parametrize('count', [2, 10])
+def test_repeated_file_sends_one_captioned_photo_album(capsys, tmp_path, count):
+    root = tmp_path / 'output'
+    root.mkdir()
+    names = []
+    for index in range(count):
+        name = f'photo{index}.png'
+        (root / name).write_bytes(PNG + bytes([index]))
+        names.append(name)
+    args = ['@alpha']
+    for name in names:
+        args += ['--file', name]
+    args += ['--caption', 'one album caption', '--reply-to', '7']
+    code, captured, gateway = invoke(capsys, tmp_path, args)
+    assert code == 0
+    assert captured.err == ''
+    assert json.loads(captured.out) == {
+        'message_ids': list(range(1000, 1000 + count)),
+        'grouped_id': 4242,
+        'chat_id': -1001,
+        'chat_title': 'Alpha',
+        'reply_to': 7,
+        'media_type': 'photo',
+    }
+    # ONE gateway call carrying every file and ONE caption — not count sends.
+    assert gateway.uploads == []
+    assert gateway.albums == [(
+        'alpha', names, [PNG + bytes([index]) for index in range(count)],
+        'photo', 'one album caption', 7,
+    )]
+    assert gateway.close_calls == 1
+
+
+def test_a_caption_file_titles_a_photo_album(capsys, tmp_path):
+    root = tmp_path / 'output'
+    root.mkdir()
+    for name in ('a.png', 'b.png'):
+        (root / name).write_bytes(PNG)
+    (root / 'caption.txt').write_text('album **caption**\nsecond line')
+    code, captured, gateway = invoke(capsys, tmp_path, [
+        '@alpha', '--file', 'a.png', '--file', 'b.png',
+        '--caption-file', 'caption.txt'])
+    assert code == 0
+    assert captured.err == ''
+    assert json.loads(captured.out)['grouped_id'] == 4242
+    assert gateway.albums == [(
+        'alpha', ['a.png', 'b.png'], [PNG, PNG],
+        'photo', 'album **caption**\nsecond line', None,
+    )]
+    assert gateway.uploads == []
+
+
+def test_send_help_documents_the_photo_album_contract(capsys, tmp_path):
+    code, captured, _ = invoke(capsys, tmp_path, ['--help'])
+    assert code == 0
+    help_text = captured.out
+    assert 'album' in help_text
+    assert '2-10' in help_text
+    assert 'JPEG/PNG' in help_text
+    assert 'never split' in help_text
+
+
+async def test_application_send_media_keeps_the_path_keyword(tmp_path):
+    """`path=` is the published keyword — a str for one file, a list for an
+    album — so callers written against the old name must keep working."""
+    from telegram_plugin.application import TelegramApplication
+    from telegram_plugin.errors import InvalidSendArguments
+
+    root = tmp_path / 'output'
+    root.mkdir()
+    (root / 'a.png').write_bytes(PNG)
+    (root / 'b.png').write_bytes(PNG + b'B')
+    gateway = MediaGateway()
+    config = load_config({
+        'HOME': str(tmp_path),
+        'TELEGRAM_OUTPUT_ROOT': str(root),
+        'TELEGRAM_PLUGIN_ALLOW_SEND': '1',
+    })
+    application = TelegramApplication(config, gateway)
+
+    single = await application.send_media(
+        chat='@alpha', path='a.png', media_type='auto')
+    album = await application.send_media(
+        chat='@alpha', path=['a.png', 'b.png'], media_type='auto')
+
+    assert single['message_id'] == 999
+    assert album['message_ids'] == [1000, 1001]
+    assert album['grouped_id'] == 4242
+    assert gateway.uploads == [('alpha', 'a.png', PNG, 'photo', '', None)]
+    assert gateway.albums == [(
+        'alpha', ['a.png', 'b.png'], [PNG, PNG + b'B'], 'photo', '', None)]
+
+    with pytest.raises(InvalidSendArguments):
+        await application.send_media(chat='@alpha', path=[], media_type='auto')
+    assert len(gateway.albums) == 1
+
+
+def test_a_single_file_still_sends_one_message(capsys, tmp_path):
+    root = tmp_path / 'output'
+    root.mkdir()
+    (root / 'image.png').write_bytes(PNG)
+    code, captured, gateway = invoke(capsys, tmp_path, ['@alpha', '--file', 'image.png'])
+    assert code == 0
+    assert json.loads(captured.out) == {'message_id': 999, 'chat_id': -1001,
+        'chat_title': 'Alpha', 'reply_to': None, 'media_type': 'photo'}
+    assert gateway.albums == []
+    assert gateway.uploads == [('alpha', 'image.png', PNG, 'photo', '', None)]
+
+
+@pytest.mark.parametrize('kind', ['missing', 'symlink', 'directory'])
+def test_an_invalid_later_album_path_never_reaches_the_gateway(capsys, tmp_path, kind):
+    root = tmp_path / 'output'
+    root.mkdir()
+    (root / 'ok.png').write_bytes(PNG)
+    bad = 'missing.png'
+    if kind == 'symlink':
+        bad = 'link.png'
+        (root / bad).symlink_to(tmp_path / 'outside.png')
+        (tmp_path / 'outside.png').write_bytes(PNG)
+    elif kind == 'directory':
+        bad = 'dir'
+        (root / bad).mkdir()
+    code, captured, gateway = invoke(capsys, tmp_path,
+        ['@alpha', '--file', 'ok.png', '--file', bad])
+    assert code == 1
+    assert json.loads(captured.out)['error']['code'] == 'unsafe_path'
+    assert gateway.uploads == []
+    assert gateway.albums == []
+    assert gateway.accesses == 0
+
+
+def test_an_album_member_that_is_not_a_photo_is_rejected(capsys, tmp_path):
+    root = tmp_path / 'output'
+    root.mkdir()
+    (root / 'ok.png').write_bytes(PNG)
+    (root / 'notes.pdf').write_bytes(b'%PDF-1.4 fake')
+    code, captured, gateway = invoke(capsys, tmp_path,
+        ['@alpha', '--file', 'ok.png', '--file', 'notes.pdf'])
+    assert code == 1
+    assert json.loads(captured.out)['error']['code'] == 'invalid_send_arguments'
+    assert gateway.uploads == []
+    assert gateway.albums == []
+    assert gateway.accesses == 0
+
+
+def test_more_than_ten_album_files_is_rejected_not_split(capsys, tmp_path):
+    root = tmp_path / 'output'
+    root.mkdir()
+    args = ['@alpha']
+    for index in range(11):
+        name = f'photo{index}.png'
+        (root / name).write_bytes(PNG)
+        args += ['--file', name]
+    code, captured, gateway = invoke(capsys, tmp_path, args)
+    assert code == 1
+    assert json.loads(captured.out)['error']['code'] == 'invalid_send_arguments'
+    assert gateway.uploads == []
+    assert gateway.albums == []
+    assert gateway.accesses == 0
+
+
+def test_a_failed_album_upload_is_not_retried(capsys, tmp_path):
+    class FailingGateway(MediaGateway):
+        async def send_media(self, *args, **kwargs):
+            self._check()
+            raise OSError('transport failed')
+    root = tmp_path / 'output'
+    root.mkdir()
+    for name in ('a.png', 'b.png'):
+        (root / name).write_bytes(PNG)
+    gateway = FailingGateway()
+    code, captured, _ = invoke(capsys, tmp_path,
+        ['@alpha', '--file', 'a.png', '--file', 'b.png'], gateway=gateway)
+    error = json.loads(captured.out)['error']
+    assert code == 1
+    assert error['code'] == 'unexpected_error'
+    assert error['retryable'] is False
+    assert gateway.accesses == 1
+    assert gateway.close_calls == 1
+
+
+async def test_telethon_album_is_one_send_file_call_with_grouped_ids(tmp_path):
+    config = load_config({'TELEGRAM_STATE_DIR': str(tmp_path)})
+    gateway = TelethonGateway(config)
+    entity = User(id=42, first_name='Recipient')
+    sent_messages = [
+        SimpleNamespace(id=300 + index, grouped_id=909, photo=object(), document=None)
+        for index in range(3)
+    ]
+    client = SimpleNamespace(send_file=AsyncMock(return_value=sent_messages))
+    states = []
+    @asynccontextmanager
+    async def session():
+        states.append('locked')
+        yield client
+        states.append('released')
+    gateway._session = session
+    async def resolve(ref):
+        assert states == ['locked']
+        assert ref.value == 'alpha'
+        return entity
+    gateway._entity = resolve
+    uploads = []
+    for index in range(3):
+        name = f'album{index}.png'
+        (tmp_path / name).write_bytes(PNG + bytes([index]))
+        uploads.append(name)
+    with ExitStack() as stack:
+        streams = [stack.enter_context(open_confined_file(name, root=tmp_path))
+                   for name in uploads]
+        result = await gateway.send_media(
+            parse_chat_ref('@alpha'), streams,
+            media_type='photo', caption='one caption', reply_to=7)
+    client.send_file.assert_awaited_once_with(
+        entity, streams, caption='one caption', reply_to=7,
+        force_document=False, parse_mode=None)
+    assert states == ['locked', 'released']
+    assert result == {
+        'message_ids': [300, 301, 302],
+        'grouped_id': 909,
+        'chat_id': 42,
+        'chat_title': 'Recipient',
+        'reply_to': 7,
+        'media_type': 'photo',
+    }
+
+
+def _album_message(message_id, grouped_id=7, *, photo=True):
+    return SimpleNamespace(
+        id=message_id,
+        grouped_id=grouped_id,
+        photo=object() if photo else None,
+        document=None if photo else object(),
+    )
+
+
+async def _send_two_file_album(tmp_path, sent):
+    """Drive TelethonGateway.send_media with a canned send_file result."""
+    config = load_config({'TELEGRAM_STATE_DIR': str(tmp_path)})
+    gateway = TelethonGateway(config)
+    entity = User(id=42, first_name='Recipient')
+    client = SimpleNamespace(send_file=AsyncMock(return_value=sent))
+
+    @asynccontextmanager
+    async def session():
+        yield client
+
+    gateway._session = session
+
+    async def resolve(ref):
+        return entity
+
+    gateway._entity = resolve
+    for name in ('a.png', 'b.png'):
+        (tmp_path / name).write_bytes(PNG)
+    with ExitStack() as stack:
+        streams = [stack.enter_context(open_confined_file(name, root=tmp_path))
+                   for name in ('a.png', 'b.png')]
+        try:
+            result = await gateway.send_media(
+                parse_chat_ref('@alpha'), streams,
+                media_type='photo', caption='', reply_to=None)
+        except Exception as exc:  # noqa: BLE001 - the test asserts on the type
+            return exc, client
+    return result, client
+
+
+@pytest.mark.parametrize('sent', [
+    [_album_message(1)],                                            # short of two files
+    [_album_message(1), _album_message(2), _album_message(3)],      # more than sent
+    [_album_message(1, 7), _album_message(2, 8)],                   # split groups
+    [_album_message(1, None), _album_message(2, None)],             # no group id
+    [_album_message(1, 7), _album_message(2, None)],                # only half grouped
+    [_album_message(1, 0), _album_message(2, 0)],                   # empty group id
+    _album_message(1),                                              # a lone message
+    None,                                                           # malformed response
+    [],                                                             # empty response
+    [_album_message(1, 7, photo=False), _album_message(2, 7)],      # non-photo member
+])
+async def test_telethon_album_unconfirmed_shapes_are_never_retried(tmp_path, sent):
+    """A partial, grouped-wrong or non-photo album answer means delivery is
+    uncertain: it must surface as a non-retryable unconfirmed error after
+    exactly one send_file call — never as a result an agent would resend."""
+    result, client = await _send_two_file_album(tmp_path, sent)
+    assert isinstance(result, RuntimeError)
+    assert 'did not confirm' in str(result)
+    client.send_file.assert_awaited_once()
+
+
+async def test_telethon_album_rejects_an_unconfirmed_response(tmp_path):
+    sent = [
+        SimpleNamespace(id=1, grouped_id=5, photo=None, document=object()),
+        SimpleNamespace(id=2, grouped_id=5, photo=object(), document=None),
+    ]
+    result, client = await _send_two_file_album(tmp_path, sent)
+    assert isinstance(result, RuntimeError)
+    assert 'did not confirm' in str(result)
+    client.send_file.assert_awaited_once()
+
+
+def test_an_unconfirmed_album_reports_non_retryable(capsys, tmp_path):
+    class UnconfirmedGateway(MediaGateway):
+        async def send_media(self, *args, **kwargs):
+            self._check()
+            raise RuntimeError('Telegram did not confirm the photo album')
+
+    root = tmp_path / 'output'
+    root.mkdir()
+    for name in ('a.png', 'b.png'):
+        (root / name).write_bytes(PNG)
+    code, captured, _ = invoke(capsys, tmp_path,
+        ['@alpha', '--file', 'a.png', '--file', 'b.png'],
+        gateway=UnconfirmedGateway())
+    error = json.loads(captured.out)['error']
+    assert code == 1
+    assert error['code'] == 'unexpected_error'
+    assert error['retryable'] is False
+    assert 'did not confirm' in error['message']

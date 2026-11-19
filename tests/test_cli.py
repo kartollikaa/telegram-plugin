@@ -33,6 +33,53 @@ def _invoke(capsys, tmp_path, argv, gateway=None, environment=None):
     return code, captured, selected
 
 
+def test_plugin_version_comes_from_the_checkout_pyproject():
+    from telegram_plugin.cli import _plugin_version
+
+    expected = re.search(
+        r'^version = "(.*)"$', (REPO / "pyproject.toml").read_text(), re.MULTILINE
+    ).group(1)
+    assert _plugin_version() == expected
+
+
+def test_version_flag_uses_the_same_version(capsys, tmp_path):
+    from telegram_plugin.cli import _plugin_version
+
+    code, captured, _ = _invoke(capsys, tmp_path, ["--version"])
+
+    assert code == 0
+    assert captured.out.strip() == f"telegram {_plugin_version()}"
+
+
+def test_plugin_version_falls_back_to_package_metadata(monkeypatch, tmp_path):
+    """An installed console script has no checkout pyproject beside it; the
+    dist-info metadata is the version it must report."""
+    from telegram_plugin.cli import _plugin_version
+
+    monkeypatch.setattr(
+        "telegram_plugin.cli._CHECKOUT_PYPROJECT", tmp_path / "absent.toml"
+    )
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "9.9.9")
+    assert _plugin_version() == "9.9.9"
+
+
+def test_plugin_version_is_unknown_without_checkout_or_metadata(
+    monkeypatch, tmp_path
+):
+    from importlib.metadata import PackageNotFoundError
+
+    from telegram_plugin.cli import _plugin_version
+
+    def missing(name):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(
+        "telegram_plugin.cli._CHECKOUT_PYPROJECT", tmp_path / "absent.toml"
+    )
+    monkeypatch.setattr("importlib.metadata.version", missing)
+    assert _plugin_version() == "unknown"
+
+
 def test_help_lists_the_read_command_surface(capsys, tmp_path):
     code, captured, _ = _invoke(capsys, tmp_path, ["--help"])
 

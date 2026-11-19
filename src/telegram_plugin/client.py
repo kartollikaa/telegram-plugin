@@ -115,7 +115,7 @@ class TelegramGateway(Protocol):
     ) -> dict: ...
 
     async def send_media(
-        self, ref: ChatRef, stream: Any, *, media_type: str,
+        self, ref: ChatRef, files: Any, *, media_type: str,
         caption: str = "", reply_to: int | None = None,
     ) -> dict: ...
 
@@ -609,15 +609,17 @@ class TelethonGateway:
         }
 
     async def send_media(
-        self, ref: ChatRef, stream: Any, *, media_type: str,
+        self, ref: ChatRef, files: Any, *, media_type: str,
         caption: str = "", reply_to: int | None = None,
     ) -> dict:
         async with self._session() as client:
             entity = await self._entity(ref)
             sent = await client.send_file(
-                entity, stream, caption=caption, reply_to=reply_to,
+                entity, files, caption=caption, reply_to=reply_to,
                 force_document=media_type == "document", parse_mode=None,
             )
+        if isinstance(files, (list, tuple)):
+            return self._album_result(sent, entity, reply_to, expected=len(files))
         confirmed_type = "photo" if sent.photo else "document" if sent.document else None
         if confirmed_type is None:
             raise RuntimeError("Telegram did not confirm a media message; inspect the chat before retrying.")
@@ -627,6 +629,36 @@ class TelethonGateway:
             "chat_title": label(utils.get_display_name(entity)),
             "reply_to": reply_to,
             "media_type": confirmed_type,
+        }
+
+    def _album_result(
+        self, sent: Any, entity: Any, reply_to: int | None, *, expected: int
+    ) -> dict:
+        """A list of files must come back as exactly `expected` photo messages
+        that all carry the same nonempty grouped_id. Anything less — a short or
+        long list, a missing or split group id, a non-photo member — means
+        delivery is unconfirmed, and retrying the write could post it twice."""
+        messages = list(sent) if isinstance(sent, (list, tuple)) else []
+        groups = [getattr(message, "grouped_id", None) for message in messages]
+        shared_group = groups[0] if groups else None
+        confirmed = (
+            len(messages) == expected
+            and all(getattr(message, "photo", None) for message in messages)
+            and all(getattr(message, "id", None) is not None for message in messages)
+            and bool(shared_group)
+            and all(group == shared_group for group in groups)
+        )
+        if not confirmed:
+            raise RuntimeError(
+                "Telegram did not confirm the photo album; inspect the chat before retrying."
+            )
+        return {
+            "message_ids": [message.id for message in messages],
+            "grouped_id": shared_group,
+            "chat_id": utils.get_peer_id(entity),
+            "chat_title": label(utils.get_display_name(entity)),
+            "reply_to": reply_to,
+            "media_type": "photo",
         }
 
     def _render(self, message: Any, username: str | None, internal: int | None) -> dict:

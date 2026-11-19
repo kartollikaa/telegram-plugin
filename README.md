@@ -71,6 +71,15 @@ launcher's absolute path and let it run commands:
 /absolute/path/to/telegram-plugin/bin/telegram read @somechannel --limit 20
 ```
 
+**As a standalone command.** The package also ships a `telegram-personal`
+console script, so a package-manager install produces a self-contained command
+that does not depend on the checkout's path:
+
+```bash
+uv tool install 'telegram-plugin @ git+https://github.com/kartollikaa/telegram-plugin.git'
+telegram-personal whoami
+```
+
 The skills under [`skills/`](skills/) are plain Markdown with YAML front
 matter; an agent that understands Agent Skills can load them as they are, and one
 that cannot still has the `--help` output of every command.
@@ -266,18 +275,25 @@ reopening its path. The original filename is preserved for documents.
 Media accepts `--caption TEXT` or `--caption-file RELATIVE_PATH` (UTF-8, under the
 same root), and `--reply-to MESSAGE_ID`. Captions are literal plain text. Caption
 flags cannot accompany text-only sends. Choose exactly one source: `--text`,
-`--text-file`, `--file`, `--photo` or `--document`. Each invocation sends one message.
+`--text-file`, `--file`, `--photo` or `--document`.
+
+`--file` may be repeated for a photo album: two to ten files, each with JPEG or PNG
+content, go out as one Telegram album under a single caption instead of separate
+messages. Every path is validated before anything is sent, and more than ten files
+is refused rather than split into several albums. One `--file` behaves as before.
 
 On Claude, invoke the plugin launcher; on Codex, use its installed absolute path:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/bin/telegram" send @recipient --file generated.png --caption "Preview"
 "${CLAUDE_PLUGIN_ROOT}/bin/telegram" send @recipient --document report.pdf --caption-file caption.txt --reply-to 123
+"${CLAUDE_PLUGIN_ROOT}/bin/telegram" send @recipient --file one.png --file two.png --file three.png --caption "Album"
 ```
 
 The send permission and exact recipient rules apply to attachments too. Successful
 media output includes confirmed `message_id`, `chat_id`, `chat_title`, `reply_to`
-and `media_type` (`photo` or `document`, taken from Telegram's response). No local
+and `media_type` (`photo` or `document`, taken from Telegram's response). An album
+reports every id under `message_ids` plus the shared `grouped_id`. No local
 path or caption is echoed. Runtime failures use the JSON error contract; invalid
 CLI syntax uses exit 2 and argparse diagnostics. The client disables automatic RPC
 retries, automatic reconnection/replay and flood-wait sleeping. An interrupted or failed upload does not confirm
@@ -340,7 +356,7 @@ prose. The complete set:
 | `unsafe_path` | a read or write path escaped the output root |
 | `invalid_timestamp` | `--since` or `--until` was not ISO 8601 |
 | `send_disabled` | sending is off; nothing was sent |
-| `invalid_send_arguments` | captions without media, or unsupported photo filename |
+| `invalid_send_arguments` | captions without media, unsupported photo content, or an album over ten files |
 | `empty_text` | the message body was empty or whitespace |
 | `flood_wait` | Telegram asked for a wait; the message carries the seconds |
 | `telegram_error` | a plugin error with no more specific code |

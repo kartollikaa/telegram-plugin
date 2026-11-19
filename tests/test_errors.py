@@ -68,3 +68,13 @@ def test_unknown_chat_ref_reaches_the_model_without_a_class_prefix():
     message = describe(UnknownChatRef("nonsense"))
     assert not message.startswith("UnknownChatRef")
     assert "t.me" in message
+
+
+def test_invalid_send_arguments_explains_the_album_contract():
+    from telegram_plugin.errors import InvalidSendArguments
+
+    message = describe(InvalidSendArguments())
+    assert "album" in message
+    assert "2 to 10" in message
+    assert "JPEG/PNG" in message
+    assert "rather than split" in message

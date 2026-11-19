@@ -152,7 +152,12 @@ class InvalidSendArguments(TelegramPluginError):
     code = "invalid_send_arguments"
 
     def __init__(self) -> None:
-        super().__init__("Captions require --file, --photo or --document; photos must have JPEG or PNG content.")
+        super().__init__(
+            "Invalid send arguments. --file may be repeated for one photo album of "
+            "2 to 10 JPEG/PNG files — Telegram caps an album at 10, and a larger set "
+            "is refused rather than split into several albums. Captions require "
+            "--file, --photo or --document; photos must have JPEG or PNG content."
+        )
 
 
 def describe(exc: BaseException) -> str:
