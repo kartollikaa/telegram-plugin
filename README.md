@@ -130,6 +130,9 @@ mkdir -p ~/.local/state/telegram-plugin
 cp .env.example ~/.local/state/telegram-plugin/.env
 ```
 
+If the form at my.telegram.org answers with a bare `ERROR` or `undefined` alert,
+see [register an application where Telegram is blocked](docs/register-app-where-telegram-is-blocked.md).
+
 Anything exported in the host's environment wins over that file. Nothing secret
 belongs in this repository or anywhere near your checkout.
 Overrides replace the entire credential pair; a partial or empty override never
