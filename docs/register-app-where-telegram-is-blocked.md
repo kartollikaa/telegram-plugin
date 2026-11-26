@@ -1,35 +1,18 @@
 # Register an application where Telegram is blocked
 
-A source checkout needs its own `api_id` and `api_hash` from
-https://my.telegram.org/apps. In a country that blocks Telegram, the form there
-tends to answer with a bare `ERROR` or `undefined` alert and create nothing.
+Use this guide if you need your own `api_id` and `api_hash` for a source
+checkout or a personal override. The publisher's archive includes an application
+profile for normal sign-in.
 
-What worked: open the site **without a VPN**, from an IP address in the country
-of your phone number, by pinning a Telegram address that the block misses.
+## What worked in one test
 
-```bash
-echo "149.154.167.220 my.telegram.org" | sudo tee -a /etc/hosts
-```
+In November 2026, the author could open https://my.telegram.org/apps through a
+VPN, but submitting the form returned `ERROR` or `undefined`. With the VPN off,
+the address returned by DNS timed out. Registration succeeded with the VPN off
+after pinning a reachable address in `/etc/hosts`. Telegram's alert gave no cause,
+and the reason for the earlier failures remains unknown.
 
-Then turn the VPN off, open https://my.telegram.org/apps in a private window and
-create the application. The steps below cover each part.
-
-Telegram does not explain the alert. This guide records one working path, tested
-in November 2026; it is not a statement of Telegram's rules.
-
-## Why the form fails
-
-Two things get in the way at once:
-
-- **With a VPN** the site opens, but the request comes from another country than
-  your phone number, and the form rejects it with the bare alert.
-- **Without a VPN** the address that DNS returns for `my.telegram.org` is blocked,
-  so the site does not open at all.
-
-Some of Telegram's addresses stay reachable. Pinning one in `/etc/hosts` lets you
-reach the site from your real IP address.
-
-## Check that the pinned address works
+## Check an address before pinning it
 
 Run this with the VPN off. `200` means the address serves the real site: `curl`
 verifies the `my.telegram.org` certificate, so a wrong host cannot pass.
@@ -63,14 +46,20 @@ connection is not final: run the scan again.
 
 ## Create the application
 
-1. Add the line to `/etc/hosts` and flush the DNS cache. On macOS:
+1. Open `/etc/hosts` with `sudoedit /etc/hosts`. If it already maps
+   `my.telegram.org`, leave that mapping in place and proceed only if it reaches
+   the site with the VPN off. Otherwise, add the following line once, using the
+   address you verified and keeping the comment so you can find it later.
 
-   ```bash
-   echo "149.154.167.220 my.telegram.org" | sudo tee -a /etc/hosts
-   sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+   ```text
+   149.154.167.220 my.telegram.org # telegram-plugin temporary registration
    ```
 
-   Linux reads `/etc/hosts` on the next lookup; no flush is needed.
+   On macOS, flush the DNS cache after saving the change.
+
+   ```bash
+   sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+   ```
 
 2. Turn the VPN off completely, including browser extensions.
 3. Open https://my.telegram.org/apps in a private window and log in with your
@@ -87,22 +76,20 @@ connection is not final: run the scan again.
 
 ## Clean up
 
-Remove the line from `/etc/hosts`; only the registration needs it.
+If you added a line, reopen `/etc/hosts` with `sudoedit /etc/hosts` and remove
+only the line you added with the `# telegram-plugin temporary registration`
+comment. Leave any existing mappings, aliases and comments in place. On macOS,
+repeat the DNS cache flush after saving.
 
-```bash
-sudo sed -i '' '/my\.telegram\.org/d' /etc/hosts   # macOS
-sudo sed -i '/my\.telegram\.org/d' /etc/hosts      # Linux
-```
+The plugin connects directly to Telegram's MTProto servers. Before signing in,
+make sure those servers are reachable from the environment running the plugin.
+A system-wide VPN can provide that access if the local network blocks it.
 
-Turn the VPN back on before you log in with the plugin. The plugin connects to
-Telegram directly and has no proxy setting of its own, so in a country that
-blocks Telegram it works only while a system-wide VPN is on.
+## If you cannot turn off the VPN on this machine
 
-## If your machine has to stay on the VPN
-
-Do the same on any other machine that sits in the country of your phone number
-without a VPN, for example a home computer over remote desktop. The application
-is bound to your Telegram account, not to the machine that created it.
+You can register the application on another machine with direct access to the
+registration site. The registration belongs to your Telegram account and can be
+used from the machine running the plugin.
 
 ## What not to do
 
