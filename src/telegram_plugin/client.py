@@ -119,6 +119,11 @@ class TelegramGateway(Protocol):
         caption: str = "", reply_to: int | None = None,
     ) -> dict: ...
 
+    async def send_album(
+        self, ref: ChatRef, files: Any, *, caption: str = "",
+        reply_to: int | None = None,
+    ) -> dict: ...
+
     async def close(self) -> None: ...
 
 
@@ -627,6 +632,51 @@ class TelethonGateway:
             "chat_title": label(utils.get_display_name(entity)),
             "reply_to": reply_to,
             "media_type": confirmed_type,
+        }
+
+    async def send_album(
+        self, ref: ChatRef, files: Any, *, caption: str = "", reply_to: int | None = None,
+    ) -> dict:
+        """One grouped send of photos; confirmation lives in _album_result."""
+        async with self._session() as client:
+            entity = await self._entity(ref)
+            sent = await client.send_file(
+                entity, files, caption=caption, reply_to=reply_to,
+                force_document=False, parse_mode=None,
+            )
+        return self._album_result(sent, entity, reply_to, expected=len(files))
+
+    def _album_result(
+        self, sent: Any, entity: Any, reply_to: int | None, *, expected: int
+    ) -> dict:
+        """A list of files must come back as exactly `expected` photo messages
+        with distinct ids that all carry the same nonempty grouped_id. Anything
+        less — a short or long list, a missing, split or repeated id, a missing
+        or split group id, a non-photo member — means delivery is unconfirmed,
+        and retrying the write could post it twice."""
+        messages = list(sent) if isinstance(sent, (list, tuple)) else []
+        groups = [getattr(message, "grouped_id", None) for message in messages]
+        message_ids = [getattr(message, "id", None) for message in messages]
+        shared_group = groups[0] if groups else None
+        confirmed = (
+            len(messages) == expected
+            and all(getattr(message, "photo", None) for message in messages)
+            and all(message_id is not None for message_id in message_ids)
+            and len(set(message_ids)) == expected
+            and bool(shared_group)
+            and all(group == shared_group for group in groups)
+        )
+        if not confirmed:
+            raise RuntimeError(
+                "Telegram did not confirm the photo album; inspect the chat before retrying."
+            )
+        return {
+            "message_ids": message_ids,
+            "grouped_id": shared_group,
+            "chat_id": utils.get_peer_id(entity),
+            "chat_title": label(utils.get_display_name(entity)),
+            "reply_to": reply_to,
+            "media_type": "photo",
         }
 
     def _render(self, message: Any, username: str | None, internal: int | None) -> dict:

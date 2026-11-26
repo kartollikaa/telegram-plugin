@@ -47,6 +47,7 @@ from telethon.tl.types.auth import SentCodeTypeApp, SentCodeTypeCall, SentCodeTy
 from telegram_plugin.client import ensure_state_dir, session_lock
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import MissingCredentials, SessionLocked, describe
+from telegram_plugin.install import login_command, login_prog, tighten_umask
 from telegram_plugin.privacy import private_json, private_output, redact_text, redact_value
 from telegram_plugin.state import (
     open_private_file,
@@ -60,7 +61,7 @@ FINAL_STATES = frozenset({
     "authorized", "logged_out", "needs_password", "cancelled", "failed", "expired",
 })
 DEFAULT_WAIT = 480.0
-COMMAND = "bin/telegram-login"
+COMMAND = login_command()
 
 NEEDS_TERMINAL = (
     f"{COMMAND} is interactive and needs a terminal for login choices, hidden passwords "
@@ -622,7 +623,7 @@ def _wait_command(
 
 def _parse(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="telegram-login",
+        prog=login_prog(),
         description=(
             "Manage this plugin's own Telegram session. Without flags: choose phone number "
             "and login code or a QR code shown in this terminal; a two-step password is "
@@ -832,5 +833,13 @@ def main(
                 browser_ui.close()
 
 
+def console_main() -> int:
+    """The installed `telegram-personal-login` entry: bin/telegram-login's
+    umask 077, without the shell that normally sets it."""
+    tighten_umask()
+    return main()
+
+
 if __name__ == "__main__":
+    tighten_umask()
     raise SystemExit(main())

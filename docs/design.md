@@ -544,7 +544,8 @@ command can reach, and flood waits surfaced honestly.
 
 ## Outbound attachments
 
-`send` chooses exactly one text, auto file, photo or document input. Media carries an optional
+`send` chooses exactly one text, auto file (a single path or a photo album), photo
+or document input. Media carries an optional
 literal caption and reply target. The application checks send permission before
 reading any input or parsing the exact chat reference. File inputs share the
 output-root confinement policy: descriptor-relative `O_NOFOLLOW` traversal and
@@ -568,4 +569,13 @@ requeue unacknowledged requests independently of RPC retries. An offline transpo
 test first demonstrates replay with reconnection enabled, then verifies that the
 gateway's actual client configuration disconnects without requeueing.
 A transport failure can leave delivery uncertain and must never trigger an
-agent-driven repeat. The CLI does not upload URLs, albums or directory trees.
+agent-driven repeat. The CLI does not upload URLs or directory trees.
+
+`--file` may repeat for a photo album of two to ten members. Every member is
+opened and sniffed under the same confinement before any Telegram call, and each
+must carry JPEG or PNG content — a non-photo member is rejected rather than sent
+in a mixed group. The album is a single `send_file` call with the list of uploads
+and one caption; Telethon would silently slice a longer list, so more than ten
+files is refused outright instead of split. The confirmed response is a list of
+messages sharing one `grouped_id`; output reports every `message_ids` entry and
+that group id, while a single file keeps the single-message output.

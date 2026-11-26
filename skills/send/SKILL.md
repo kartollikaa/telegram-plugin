@@ -41,11 +41,17 @@ Sending stays unavailable until the operator deliberately configures
    regular non-symlink files inside the configured root. Add `--caption "TEXT"` or
    `--caption-file RELATIVE_PATH` for a literal UTF-8 caption; these are mutually exclusive
    and only valid with media. `--text`/`--text-file` remain text-only and cannot accompany media.
+   Repeat `--file RELATIVE_PATH` two to ten times for a photo album: every member must have
+   JPEG or PNG content, the single caption applies to the whole album, and Telegram receives
+   one grouped send rather than separate messages. More than ten files is refused, never
+   split into several albums. Every path is validated before anything is sent; `--photo` and
+   `--document` remain single-file only.
 4. For an explicit reply, identify the target with `message` or `thread`, then add
    `--reply-to MESSAGE_ID`. Do not infer a reply target from message order.
 5. Execute exactly one ` send ` command. Do not automatically retry any failure. Inspect the
    chat before an operator-authorized retry; a transport failure may leave delivery uncertain.
-6. Report only confirmed output: `message_id`, `chat_id`, `chat_title`, `reply_to`, and (for attachments) `media_type`.
+6. Report only confirmed output: `message_id` (for an album, every `message_ids` entry and
+   the shared `grouped_id`), `chat_id`, `chat_title`, `reply_to`, and (for attachments) `media_type`.
    If the command fails, say that nothing was confirmed as sent and include the structured error.
 
 Never reveal credentials, session files, environment values, or message text in diagnostics.

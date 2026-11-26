@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Sequence
+from contextlib import ExitStack
 from datetime import datetime, timezone
 
 from telegram_plugin.client import DIALOG_SCAN_CAP, Batch, TelegramGateway
@@ -25,6 +28,11 @@ GLOBAL_SEARCH_HINT = (
     "chat — so narrow it with --chat, or pass --out PATH with a larger --out-limit to write "
     "the whole result to a JSONL file."
 )
+
+# Telegram groups at most this many photos per album. Telethon would silently
+# slice a longer list into several sends, so the CLI refuses instead: an agent
+# that asked for one album must not get several.
+ALBUM_LIMIT = 10
 
 
 class TelegramApplication:
@@ -170,32 +178,56 @@ class TelegramApplication:
             raise SendDisabled()
 
     async def send_media(
-        self, *, chat: str, path: str, media_type: str,
+        self, *, chat: str, path: str | Sequence[str], media_type: str,
         caption: str = "", reply_to: int | None = None,
     ) -> dict:
         self.require_send_enabled()
         if media_type not in {"auto", "photo", "document"}:
-            raise InvalidSendArguments()
-        ref = parse_chat_ref(chat)
-        with open_confined_file(path, root=self.config.output_root) as stream:
-            if media_type == "auto":
-                detected = photo_format(stream)
-                media_type = "photo" if detected else "document"
-                if detected and not stream.name.lower().endswith(
-                    (".jpg", ".jpeg") if detected == "jpg" else (".png",)
-                ):
-                    stream.name = f"{stream.name}.{detected}"
-            elif media_type == "photo":
-                detected = photo_format(stream)
-                if detected is None:
-                    raise InvalidSendArguments()
-                if not stream.name.lower().endswith(
-                    (".jpg", ".jpeg") if detected == "jpg" else (".png",)
-                ):
-                    stream.name = f"{stream.name}.{detected}"
-            return await self.gateway.send_media(
-                ref, stream, media_type=media_type, caption=caption, reply_to=reply_to,
+            raise InvalidSendArguments(f"unknown media_type {media_type!r}")
+        paths = [path] if isinstance(path, (str, os.PathLike)) else list(path or [])
+        if not paths:
+            raise InvalidSendArguments("at least one file is required")
+        if len(paths) > ALBUM_LIMIT:
+            raise InvalidSendArguments(
+                f"{len(paths)} files given; an album holds at most {ALBUM_LIMIT} "
+                "photos and is never split into several sends"
             )
+        if len(paths) > 1 and media_type != "auto":
+            raise InvalidSendArguments(
+                f"media_type {media_type!r} sends one file; several files are a photo album"
+            )
+        ref = parse_chat_ref(chat)
+        album = len(paths) > 1
+        # Albums carry photos only, so every member goes through the photo checks.
+        member_mode = "photo" if album else media_type
+        with ExitStack() as stack:
+            uploads = [
+                self._confined_upload(stack, member, member_mode, position)
+                for position, member in enumerate(paths, 1)
+            ]
+            if album:
+                return await self.gateway.send_album(
+                    ref, [stream for stream, _ in uploads],
+                    caption=caption, reply_to=reply_to,
+                )
+            stream, resolved = uploads[0]
+            return await self.gateway.send_media(
+                ref, stream, media_type=resolved, caption=caption, reply_to=reply_to,
+            )
+
+    def _confined_upload(self, stack: ExitStack, path: str, media_type: str, position: int):
+        """Open one confined file and settle whether it travels as photo or document."""
+        stream = stack.enter_context(open_confined_file(path, root=self.config.output_root))
+        if media_type == "document":
+            return stream, "document"
+        detected = photo_format(stream)
+        if media_type == "photo" and detected is None:
+            raise InvalidSendArguments(f"file {position} is not JPEG or PNG content")
+        if detected and not stream.name.lower().endswith(
+            (".jpg", ".jpeg") if detected == "jpg" else (".png",)
+        ):
+            stream.name = f"{stream.name}.{detected}"
+        return stream, "photo" if detected else "document"
 
     async def send(
         self,

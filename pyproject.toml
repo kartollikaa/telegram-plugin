@@ -16,6 +16,10 @@ dependencies = ["telethon>=1.42,<2", "segno>=1.6,<2"]
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "bandit>=1.7", "pip-audit>=2.7", "ruff>=0.6"]
 
+[project.scripts]
+telegram-personal = "telegram_plugin.cli:console_main"
+telegram-personal-login = "telegram_plugin.login:console_main"
+
 [project.urls]
 Homepage = "https://github.com/kartollikaa/telegram-plugin"
 

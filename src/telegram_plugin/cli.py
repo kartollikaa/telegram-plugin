@@ -6,11 +6,11 @@ import argparse
 import asyncio
 import os
 from collections.abc import Callable, Mapping, Sequence
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from telegram_plugin.config import Config, load_config_from_environment
 from telegram_plugin.errors import InvalidSendArguments, TelegramPluginError, describe
+from telegram_plugin.install import CHECKOUT_ROOT, cli_prog, tighten_umask
 from telegram_plugin.matching import normalize_dialog_text
 from telegram_plugin.paths import read_confined_text
 from telegram_plugin.privacy import private_json, private_output
@@ -51,7 +51,7 @@ def _discovery_query(raw: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="telegram", description="Telegram access for local agents")
+    parser = argparse.ArgumentParser(prog=cli_prog(), description="Telegram access for local agents")
     parser.add_argument("--version", action="version", version=f"%(prog)s {_plugin_version()}")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -129,7 +129,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--dest-dir", dest="dest_dir", help="directory under the output root"
     )
 
-    send = commands.add_parser("send", help="send one text message, photo or document")
+    send = commands.add_parser(
+        "send", help="send a text message, photo, document or JPEG/PNG photo album"
+    )
     send.add_argument("chat", help="t.me link, @username or numeric id")
     text_source = send.add_mutually_exclusive_group(required=True)
     text_source.add_argument("--text", help="the message body, as one argument")
@@ -138,7 +140,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     text_source.add_argument("--photo", help="JPEG/PNG file under the output root, sent as a photo")
     text_source.add_argument("--document", help="file under the output root, sent as a document")
-    text_source.add_argument("--file", help="file under output root: JPEG/PNG as photo, others as document")
+    text_source.add_argument(
+        "--file", action="append",
+        help="file under output root: JPEG/PNG as photo, others as document; "
+             "repeat 2-10 times for one JPEG/PNG photo album — never split "
+             "into several sends",
+    )
     caption_source = send.add_mutually_exclusive_group()
     caption_source.add_argument("--caption", help="literal media caption")
     caption_source.add_argument("--caption-file", help="UTF-8 caption file under the output root")
@@ -149,16 +156,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_CHECKOUT_PYPROJECT = CHECKOUT_ROOT / "pyproject.toml"
+
+
 def _plugin_version() -> str:
-    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    """A checkout reports the version in its pyproject; an installed console
+    script has no pyproject beside it, so fall back to package metadata."""
     try:
-        lines = pyproject.read_text(encoding="utf-8").splitlines()
+        lines = _CHECKOUT_PYPROJECT.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return "unknown"
+        lines = []
     for line in lines:
         if line.startswith("version = "):
             return line.partition("=")[2].strip().strip('"')
-    return "unknown"
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        return version("telegram-plugin")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 async def dispatch(arguments: argparse.Namespace, application: TelegramApplication) -> dict:
@@ -210,16 +225,17 @@ async def dispatch(arguments: argparse.Namespace, application: TelegramApplicati
         )
     if command == "send":
         application.require_send_enabled()
-        media_path = next((path for path in (arguments.photo, arguments.document, arguments.file)
+        media_path = next((path for path in (arguments.photo, arguments.document)
                            if path is not None), None)
-        if media_path is None and (arguments.caption is not None or arguments.caption_file is not None):
-            raise InvalidSendArguments()
-        if media_path is not None:
+        paths = [media_path] if media_path is not None else list(arguments.file or [])
+        if not paths and (arguments.caption is not None or arguments.caption_file is not None):
+            raise InvalidSendArguments("a caption needs --file, --photo or --document")
+        if paths:
             caption = arguments.caption or ""
             if arguments.caption_file is not None:
                 caption = read_confined_text(arguments.caption_file, root=application.config.output_root)
             return await application.send_media(
-                chat=arguments.chat, path=media_path,
+                chat=arguments.chat, path=paths,
                 media_type=("photo" if arguments.photo is not None else
                             "document" if arguments.document is not None else "auto"),
                 caption=caption, reply_to=arguments.reply_to,
@@ -306,5 +322,13 @@ def main(
     return 0
 
 
+def console_main() -> int:
+    """The installed `telegram-personal` entry: bin/telegram's umask 077,
+    without the shell that normally sets it."""
+    tighten_umask()
+    return main()
+
+
 if __name__ == "__main__":
+    tighten_umask()
     raise SystemExit(main())
